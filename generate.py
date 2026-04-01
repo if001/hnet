@@ -1,16 +1,10 @@
-import numpy as np
-import json
-import torch
 import argparse
 import sys
+
+import torch
 from omegaconf import ListConfig
 
-from hnet.models.mixer_seq import HNetForCausalLM
-from hnet.models.config_hnet import (
-    AttnConfig,
-    SSMConfig,
-    HNetConfig,
-)
+from hnet.models import HNetForCausalLM, load_hnet_config
 from hnet.utils.tokenizers import ByteTokenizer
 
 
@@ -24,21 +18,12 @@ def load_from_pretrained(model_path: str, model_config_path: str):
     Returns:
         Loaded HNetForCausalLM model
     """
-    # Load configuration
-    with open(model_config_path, "r") as f:
-        config = json.load(f)
+    hnet_cfg = load_hnet_config(model_config_path)
 
-    # Create config objects
-    attn_cfg = AttnConfig(**config.pop("attn_cfg"))
-    ssm_cfg = SSMConfig(**config.pop("ssm_cfg"))
-    hnet_cfg = HNetConfig(**config, attn_cfg=attn_cfg, ssm_cfg=ssm_cfg)
-
-    # Create model
     device = "cuda" if torch.cuda.is_available() else "cpu"
     model = HNetForCausalLM(hnet_cfg, device=device, dtype=torch.bfloat16)
     model.eval()
 
-    # Load checkpoint
     major, minor = map(int, torch.__version__.split('.')[:2])
     if (major, minor) >= (2, 6):
         with torch.serialization.safe_globals([ListConfig]):
@@ -72,7 +57,6 @@ def generate(
     device = next(model.parameters()).device
     tokenizer = ByteTokenizer()
 
-    # Tokenize prompt
     encoded = tokenizer.encode([prompt], add_bos=True)[0]
     input_ids = torch.tensor(
         encoded["input_ids"], dtype=torch.long, device=device
@@ -89,14 +73,12 @@ def generate(
     logits = output.logits[0, -1, :] / temperature
 
     for _ in range(max_tokens):
-        # Apply top-p sampling
         if top_p < 1.0:
             sorted_logits, sorted_indices = torch.sort(logits, descending=True)
             cumulative_probs = torch.cumsum(
                 torch.softmax(sorted_logits, dim=-1), dim=-1
             )
 
-            # Remove tokens with cumulative probability above the threshold
             sorted_indices_to_remove = cumulative_probs > top_p
             sorted_indices_to_remove[1:] = sorted_indices_to_remove[:-1].clone()
             sorted_indices_to_remove[0] = 0
@@ -116,7 +98,6 @@ def generate(
         with torch.inference_mode():
             output = model.step(current_token, inference_cache)
 
-        # Get logits and apply temperature
         logits = output.logits[0, -1, :] / temperature
 
 
@@ -175,7 +156,6 @@ def main():
         )
 
         print(f"\033[92m{prompt}\033[0m", end="")
-        token_count = 0
         buf = []
 
         for token in generate(
@@ -186,7 +166,6 @@ def main():
             top_p=args.top_p,
         ):
             buf.append(token)
-            token_count += 1
 
             decoded = None
             res = None
@@ -194,7 +173,7 @@ def main():
                 try:
                     res = tokenizer.decode(buf[:j])
                     decoded = j
-                except:
+                except Exception:
                     pass
 
             if res is not None:

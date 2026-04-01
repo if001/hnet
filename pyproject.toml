@@ -16,10 +16,12 @@ dependencies = [
     "mamba_ssm @ git+https://github.com/state-spaces/mamba.git@a6a1dae6efbf804c9944a0c2282b437deb4886d8",
     "flash_attn==2.8.0.post2",
     "causal_conv1d @ git+https://github.com/Dao-AILab/causal-conv1d.git@e940ead2fd962c56854455017541384909ca669f",
+    "datasets>=3.0.0",
     "einops",
     "optree",
     "regex",
     "omegaconf",
+    "rich>=13.9.0",
 ]
 [project.urls]
 Repository = "https://github.com/goombalab/hnet"

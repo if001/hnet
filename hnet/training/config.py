@@ -5,6 +5,9 @@ from dataclasses import dataclass, field
 class DatasetSource:
     name: str
     split: str = "train"
+    config_name: str | None = None
+    take_examples: int = 100_000
+    skip_examples: int = 0
 
 
 @dataclass(frozen=True)

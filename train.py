@@ -1,6 +1,6 @@
 import argparse
 
-from hnet.training import DatasetSource, TrainingConfig, train
+from hnet.training import DatasetSource, TrainingConfig, train, dataset_template
 
 
 def parse_args() -> TrainingConfig:
@@ -58,10 +58,15 @@ def parse_args() -> TrainingConfig:
     compression_ratios = args.compression_ratios or [4.0]
     lr_multipliers = args.lr_multipliers or [1.0, 1.0]
 
+    _ds = dataset_template.SOURCES_JA9_EN0_CODE1
+    # _ds = dataset_template.SOURCES_JA8_EN1_CODE1
+    # _ds = dataset_template.SOURCES_JA45_EN45_CODE1
+
     return TrainingConfig(
         model_config_path=args.model_config_path,
         output_dir=args.output_dir,
-        datasets=[DatasetSource(name=name) for name in dataset_names],
+        # datasets=[DatasetSource(name=name) for name in dataset_names],
+        datasets=_ds,
         seq_len=args.seq_len,
         batch_size=args.batch_size,
         grad_accum_steps=args.grad_accum_steps,

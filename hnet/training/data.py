@@ -29,8 +29,7 @@ PREFERRED_TEXT_KEYS = (
 
 
 class RecordFormatter(Protocol):
-    def format_record(self, record: Mapping[str, object]) -> str | None:
-        ...
+    def format_record(self, record: Mapping[str, object]) -> str | None: ...
 
 
 def _stringify_scalar(value: TextValue) -> str:
@@ -60,7 +59,9 @@ def _join_message_content(messages: Sequence[object]) -> str:
 
 def _stringify_mapping(value: Mapping[str, object]) -> str:
     messages = value.get("messages")
-    if isinstance(messages, Sequence) and not isinstance(messages, (str, bytes, bytearray)):
+    if isinstance(messages, Sequence) and not isinstance(
+        messages, (str, bytes, bytearray)
+    ):
         joined = _join_message_content(messages)
         if joined:
             return joined
@@ -122,9 +123,32 @@ class DefaultRecordFormatter:
         return "\n\n".join(deduped_values)
 
 
-def _load_streaming_source(source: DatasetSource, shuffle_buffer_size: int) -> HFIterableDataset:
-    dataset = load_dataset(source.name, split=source.split, streaming=True)
-    return dataset.shuffle(buffer_size=shuffle_buffer_size, seed=42)
+# def _load_streaming_source(source: DatasetSource, shuffle_buffer_size: int) -> HFIterableDataset:
+#     dataset = load_dataset(source.name, split=source.split, streaming=True)
+#     return dataset.shuffle(buffer_size=shuffle_buffer_size, seed=42)
+
+
+def _load_streaming_source(
+    source: DatasetSource,
+    shuffle_buffer_size: int,
+) -> HFIterableDataset:
+    dataset = load_dataset(
+        source.name,
+        source.config_name,
+        split=source.split,
+        streaming=True,
+    )
+
+    # fineweb-2-edu-japanese/small_tokens_cleaned 用
+    if source.skip_examples > 0:
+        dataset = dataset.skip(source.skip_examples)
+
+    dataset = dataset.shuffle(buffer_size=shuffle_buffer_size, seed=42)
+
+    if source.take_examples > 0:
+        dataset = dataset.take(source.take_examples)
+
+    return dataset
 
 
 class StreamingByteDataset(torch.utils.data.IterableDataset):

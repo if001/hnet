@@ -10,7 +10,7 @@ import torch.nn.functional as F
 from torch.optim import AdamW
 from torch.utils.data import DataLoader
 
-from ..models.config_io import load_hnet_config
+from ..models.config_io import load_hnet_config, save_hnet_config
 from ..models.mixer_seq import HNetForCausalLM
 from ..utils.train import group_params, load_balancing_loss
 from .config import TrainingConfig
@@ -65,12 +65,12 @@ def create_model(
     training_config: TrainingConfig,
     device: torch.device,
     dtype: torch.dtype,
-) -> HNetForCausalLM:
+) -> tuple[HNetForCausalLM, object]:
     config = load_hnet_config(training_config.model_config_path)
     model = HNetForCausalLM(config, device=device, dtype=dtype)
     model.init_weights()
     model.apply_lr_multiplier(training_config.lr_multipliers)
-    return model
+    return model, config
 
 
 def create_dataloader(
@@ -166,7 +166,11 @@ def train(training_config: TrainingConfig) -> None:
     use_grad_scaler = device.type == "cuda" and training_dtype == torch.float16
     logger.info("training_dtype=%s grad_scaler=%s", training_dtype, use_grad_scaler)
 
-    model = create_model(training_config, device, training_dtype)
+    model, model_config = create_model(training_config, device, training_dtype)
+    output_dir = Path(training_config.output_dir)
+    saved_config_path = save_hnet_config(model_config, output_dir / "model_config.json")
+    logger.info("saved_model_config=%s", saved_config_path)
+
     total_params, trainable_params = count_parameters(model)
     logger.info(
         "model_parameters total=%s trainable=%s",
@@ -257,6 +261,6 @@ def train(training_config: TrainingConfig) -> None:
                 model=model,
                 optimizer=optimizer,
                 step=step + 1,
-                output_dir=Path(training_config.output_dir),
+                output_dir=output_dir,
             )
             logger.info("saved_checkpoint=%s", checkpoint_path)

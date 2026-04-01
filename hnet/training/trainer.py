@@ -171,6 +171,23 @@ def cosine_schedule(
     return min_lr + (max_lr - min_lr) * cosine
 
 
+def estimate_dataset_examples(training_config: TrainingConfig) -> tuple[int | None, int | None]:
+    example_counts = []
+    for source in training_config.datasets:
+        if source.take_examples <= 0:
+            return None, None
+        example_counts.append(source.take_examples)
+
+    if not example_counts:
+        return 0, 0
+
+    total_examples = sum(example_counts)
+    optimizer_steps = total_examples // (
+        training_config.batch_size * training_config.grad_accum_steps
+    )
+    return total_examples, optimizer_steps
+
+
 def save_checkpoint(
     model: HNetForCausalLM,
     optimizer: AdamW,
@@ -209,6 +226,16 @@ def train(training_config: TrainingConfig) -> None:
 
     metrics_logger = TrainingMetricsLogger(output_dir / "training_metrics.csv")
     logger.info("training_metrics_csv=%s", metrics_logger.output_path)
+
+    estimated_examples, estimated_optimizer_steps = estimate_dataset_examples(training_config)
+    if estimated_examples is None:
+        logger.info("dataset_examples_estimate=unavailable")
+    else:
+        logger.info(
+            "dataset_examples_estimate=%d data_mix=concatenate_then_shuffle rough_optimizer_steps=%d",
+            estimated_examples,
+            estimated_optimizer_steps,
+        )
 
     total_params, trainable_params = count_parameters(model)
     logger.info(

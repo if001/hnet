@@ -6,7 +6,7 @@ class DatasetSource:
     name: str
     split: str = "train"
     config_name: str | None = None
-    take_examples: int = 100_000
+    take_examples: int = -1
     skip_examples: int = 0
 
 

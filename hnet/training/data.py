@@ -5,7 +5,7 @@ from typing import Protocol
 
 import torch
 from datasets import IterableDataset as HFIterableDataset
-from datasets import interleave_datasets, load_dataset
+from datasets import concatenate_datasets, load_dataset
 
 from ..utils.tokenizers import ByteTokenizer
 from .config import DatasetSource
@@ -84,6 +84,7 @@ def _stringify_sequence(value: Sequence[object]) -> str:
     return "\n".join(part for part in parts if part)
 
 
+
 def _stringify_value(value: object) -> str:
     if isinstance(value, (str, int, float, bool)) or value is None:
         return _stringify_scalar(value)
@@ -123,11 +124,6 @@ class DefaultRecordFormatter:
         return "\n\n".join(deduped_values)
 
 
-# def _load_streaming_source(source: DatasetSource, shuffle_buffer_size: int) -> HFIterableDataset:
-#     dataset = load_dataset(source.name, split=source.split, streaming=True)
-#     return dataset.shuffle(buffer_size=shuffle_buffer_size, seed=42)
-
-
 def _load_streaming_source(
     source: DatasetSource,
     shuffle_buffer_size: int,
@@ -139,16 +135,13 @@ def _load_streaming_source(
         streaming=True,
     )
 
-    # fineweb-2-edu-japanese/small_tokens_cleaned 用
     if source.skip_examples > 0:
         dataset = dataset.skip(source.skip_examples)
-
-    dataset = dataset.shuffle(buffer_size=shuffle_buffer_size, seed=42)
 
     if source.take_examples > 0:
         dataset = dataset.take(source.take_examples)
 
-    return dataset
+    return dataset.shuffle(buffer_size=shuffle_buffer_size, seed=42)
 
 
 class StreamingByteDataset(torch.utils.data.IterableDataset):
@@ -177,7 +170,8 @@ class StreamingByteDataset(torch.utils.data.IterableDataset):
         ]
         if len(datasets) == 1:
             return datasets[0]
-        return interleave_datasets(datasets, stopping_strategy="first_exhausted")
+        merged = concatenate_datasets(datasets)
+        return merged.shuffle(buffer_size=self.shuffle_buffer_size, seed=42)
 
     def __iter__(self) -> Iterator[dict[str, torch.Tensor]]:
         token_buffer: list[int] = []

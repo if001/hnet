@@ -1,6 +1,12 @@
 import argparse
 
-from hnet.training import DatasetSource, TrainingConfig, train, dataset_template
+import hnet.training.dataset_template as dataset_template
+from hnet.training import DatasetSource, TrainingConfig, train
+
+
+TEMPLATE_CHOICES = sorted(
+    name for name in dir(dataset_template) if name.startswith("SOURCES_")
+)
 
 
 def parse_args() -> TrainingConfig:
@@ -22,6 +28,12 @@ def parse_args() -> TrainingConfig:
         action="append",
         dest="datasets",
         help="Hugging Face dataset name. Repeat to specify multiple datasets.",
+    )
+    parser.add_argument(
+        "--dataset-template",
+        type=str,
+        choices=TEMPLATE_CHOICES,
+        help="Named dataset template from hnet.training.dataset_template.",
     )
     parser.add_argument("--seq-len", type=int, default=512)
     parser.add_argument("--batch-size", type=int, default=2)
@@ -54,19 +66,23 @@ def parse_args() -> TrainingConfig:
     parser.add_argument("--shuffle-buffer-size", type=int, default=512)
     args = parser.parse_args()
 
-    dataset_names = args.datasets or ["if001/bunpo_phi4_ctx", "if001/bunpo_phi4"]
     compression_ratios = args.compression_ratios or [4.0]
     lr_multipliers = args.lr_multipliers or [1.0, 1.0]
 
-    _ds = dataset_template.SOURCES_JA9_EN0_CODE1
-    # _ds = dataset_template.SOURCES_JA8_EN1_CODE1
-    # _ds = dataset_template.SOURCES_JA45_EN45_CODE1
+    if args.datasets:
+        datasets = [DatasetSource(name=name) for name in args.datasets]
+    elif args.dataset_template:
+        datasets = list(getattr(dataset_template, args.dataset_template))
+    else:
+        datasets = [
+            DatasetSource(name="if001/bunpo_phi4_ctx"),
+            DatasetSource(name="if001/bunpo_phi4"),
+        ]
 
     return TrainingConfig(
         model_config_path=args.model_config_path,
         output_dir=args.output_dir,
-        # datasets=[DatasetSource(name=name) for name in dataset_names],
-        datasets=_ds,
+        datasets=datasets,
         seq_len=args.seq_len,
         batch_size=args.batch_size,
         grad_accum_steps=args.grad_accum_steps,

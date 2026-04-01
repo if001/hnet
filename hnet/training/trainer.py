@@ -158,12 +158,15 @@ def apply_learning_rate(optimizer: AdamW, base_learning_rate: float) -> None:
 def cosine_schedule(
     step: int,
     warmup_steps: int,
-    max_steps: int,
+    max_steps: int | None,
     max_lr: float,
     min_lr: float,
 ) -> float:
     if step < warmup_steps:
         return max_lr * float(step + 1) / float(max(1, warmup_steps))
+
+    if max_steps is None:
+        return max_lr
 
     progress = (step - warmup_steps) / float(max(1, max_steps - warmup_steps))
     progress = min(max(progress, 0.0), 1.0)
@@ -237,6 +240,11 @@ def train(training_config: TrainingConfig) -> None:
             estimated_optimizer_steps,
         )
 
+    effective_max_steps = training_config.max_steps
+    if effective_max_steps is None and estimated_optimizer_steps is not None:
+        effective_max_steps = estimated_optimizer_steps
+    logger.info("effective_max_steps=%s", effective_max_steps)
+
     total_params, trainable_params = count_parameters(model)
     logger.info(
         "model_parameters total=%s trainable=%s",
@@ -255,23 +263,29 @@ def train(training_config: TrainingConfig) -> None:
     scaler = torch.amp.GradScaler("cuda", enabled=use_grad_scaler)
 
     last_saved_step = 0
+    completed_steps = 0
 
-    for step in range(training_config.max_steps):
+    while training_config.max_steps is None or completed_steps < training_config.max_steps:
         optimizer.zero_grad(set_to_none=True)
         ce_loss_value = 0.0
         ratio_loss_value = 0.0
+        micro_batches_processed = 0
 
         learning_rate = cosine_schedule(
-            step=step,
+            step=completed_steps,
             warmup_steps=training_config.warmup_steps,
-            max_steps=training_config.max_steps,
+            max_steps=effective_max_steps,
             max_lr=training_config.learning_rate,
             min_lr=training_config.min_learning_rate,
         )
         apply_learning_rate(optimizer, learning_rate)
 
         for _micro_step in range(training_config.grad_accum_steps):
-            batch = next(data_iterator)
+            try:
+                batch = next(data_iterator)
+            except StopIteration:
+                break
+            micro_batches_processed += 1
             input_ids = batch["input_ids"].to(device, non_blocking=True)
             labels = batch["labels"].to(device, non_blocking=True)
             mask = batch["mask"].to(device, non_blocking=True)
@@ -301,6 +315,9 @@ def train(training_config: TrainingConfig) -> None:
             ce_loss_value += float(ce_loss.detach())
             ratio_loss_value += float(ratio_loss.detach())
 
+        if micro_batches_processed == 0:
+            break
+
         if use_grad_scaler:
             scaler.unscale_(optimizer)
         torch.nn.utils.clip_grad_norm_(
@@ -312,42 +329,43 @@ def train(training_config: TrainingConfig) -> None:
         else:
             optimizer.step()
 
-        average_ce = ce_loss_value / training_config.grad_accum_steps
-        average_ratio = ratio_loss_value / training_config.grad_accum_steps
+        completed_steps += 1
+        average_ce = ce_loss_value / micro_batches_processed
+        average_ratio = ratio_loss_value / micro_batches_processed
         total_loss = average_ce + training_config.train_ratio_weight * average_ratio
         metrics_logger.log(
-            step=step + 1,
+            step=completed_steps,
             learning_rate=learning_rate,
             ce_loss=average_ce,
             ratio_loss=average_ratio,
             total_loss=total_loss,
         )
 
-        if (step + 1) % training_config.log_every == 0 or step == 0:
+        if completed_steps % training_config.log_every == 0 or completed_steps == 1:
             logger.info(
                 "step=%d lr=%.6g ce_loss=%.4f ratio_loss=%.4f total_loss=%.4f",
-                step + 1,
+                completed_steps,
                 learning_rate,
                 average_ce,
                 average_ratio,
                 total_loss,
             )
 
-        if (step + 1) % training_config.save_every == 0:
+        if completed_steps % training_config.save_every == 0:
             checkpoint_path = save_checkpoint(
                 model=model,
                 optimizer=optimizer,
-                step=step + 1,
+                step=completed_steps,
                 output_dir=output_dir,
             )
-            last_saved_step = step + 1
+            last_saved_step = completed_steps
             logger.info("saved_checkpoint=%s", checkpoint_path)
 
-    if training_config.max_steps > 0 and last_saved_step != training_config.max_steps:
+    if completed_steps > 0 and last_saved_step != completed_steps:
         checkpoint_path = save_checkpoint(
             model=model,
             optimizer=optimizer,
-            step=training_config.max_steps,
+            step=completed_steps,
             output_dir=output_dir,
         )
         logger.info("saved_final_checkpoint=%s", checkpoint_path)

@@ -23,7 +23,7 @@ class TrainingConfig:
     seq_len: int = 512
     batch_size: int = 2
     grad_accum_steps: int = 8
-    max_steps: int = 200
+    max_steps: int | None = None
     learning_rate: float = 3e-4
     min_learning_rate: float = 3e-5
     warmup_steps: int = 20

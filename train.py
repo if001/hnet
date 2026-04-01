@@ -38,7 +38,7 @@ def parse_args() -> TrainingConfig:
     parser.add_argument("--seq-len", type=int, default=512)
     parser.add_argument("--batch-size", type=int, default=2)
     parser.add_argument("--grad-accum-steps", type=int, default=8)
-    parser.add_argument("--max-steps", type=int, default=200)
+    parser.add_argument("--max-steps", type=int, default=None)
     parser.add_argument("--learning-rate", type=float, default=3e-4)
     parser.add_argument("--min-learning-rate", type=float, default=3e-5)
     parser.add_argument("--warmup-steps", type=int, default=20)

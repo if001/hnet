@@ -7,7 +7,6 @@ from pathlib import Path
 import numpy as np
 import torch
 import torch.nn.functional as F
-from rich.logging import RichHandler
 from torch.optim import AdamW
 from torch.utils.data import DataLoader
 
@@ -54,11 +53,21 @@ def format_parameter_count(count: int) -> str:
     return f"{count:,}"
 
 
+def get_training_dtype(device: torch.device) -> torch.dtype:
+    if device.type != "cuda":
+        return torch.float32
+    if torch.cuda.is_bf16_supported():
+        return torch.bfloat16
+    return torch.float16
+
+
 def create_model(
-    training_config: TrainingConfig, device: torch.device
+    training_config: TrainingConfig,
+    device: torch.device,
+    dtype: torch.dtype,
 ) -> HNetForCausalLM:
     config = load_hnet_config(training_config.model_config_path)
-    model = HNetForCausalLM(config, device=device, dtype=torch.bfloat16)
+    model = HNetForCausalLM(config, device=device, dtype=dtype)
     model.init_weights()
     model.apply_lr_multiplier(training_config.lr_multipliers)
     return model
@@ -153,7 +162,11 @@ def train(training_config: TrainingConfig) -> None:
     logger.info("device=%s", device)
     logger.info("training_config=%s", asdict(training_config))
 
-    model = create_model(training_config, device)
+    training_dtype = get_training_dtype(device)
+    use_grad_scaler = device.type == "cuda" and training_dtype == torch.float16
+    logger.info("training_dtype=%s grad_scaler=%s", training_dtype, use_grad_scaler)
+
+    model = create_model(training_config, device, training_dtype)
     total_params, trainable_params = count_parameters(model)
     logger.info(
         "model_parameters total=%s trainable=%s",
@@ -169,7 +182,7 @@ def train(training_config: TrainingConfig) -> None:
     optimizer = AdamW(param_groups, betas=(0.9, 0.95), eps=1e-8)
 
     model.train()
-    scaler = torch.amp.GradScaler("cuda", enabled=device.type == "cuda")
+    scaler = torch.amp.GradScaler("cuda", enabled=use_grad_scaler)
 
     for step in range(training_config.max_steps):
         optimizer.zero_grad(set_to_none=True)
@@ -193,7 +206,7 @@ def train(training_config: TrainingConfig) -> None:
 
             with torch.autocast(
                 device_type=device.type,
-                dtype=torch.bfloat16,
+                dtype=training_dtype,
                 enabled=device.type == "cuda",
             ):
                 output = model(input_ids=input_ids, mask=mask)
@@ -209,16 +222,23 @@ def train(training_config: TrainingConfig) -> None:
                 loss = ce_loss + training_config.train_ratio_weight * ratio_loss
                 loss = loss / training_config.grad_accum_steps
 
-            scaler.scale(loss).backward()
+            if use_grad_scaler:
+                scaler.scale(loss).backward()
+            else:
+                loss.backward()
             ce_loss_value += float(ce_loss.detach())
             ratio_loss_value += float(ratio_loss.detach())
 
-        scaler.unscale_(optimizer)
+        if use_grad_scaler:
+            scaler.unscale_(optimizer)
         torch.nn.utils.clip_grad_norm_(
             model.parameters(), training_config.grad_clip_norm
         )
-        scaler.step(optimizer)
-        scaler.update()
+        if use_grad_scaler:
+            scaler.step(optimizer)
+            scaler.update()
+        else:
+            optimizer.step()
 
         if (step + 1) % training_config.log_every == 0 or step == 0:
             average_ce = ce_loss_value / training_config.grad_accum_steps

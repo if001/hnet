@@ -19,12 +19,15 @@ from .data import DefaultRecordFormatter, StreamingByteDataset
 
 
 def configure_logging() -> logging.Logger:
-    logging.basicConfig(
-        level=logging.INFO,
-        format="%(message)s",
-        handlers=[RichHandler(rich_tracebacks=True, markup=False)],
-    )
-    return logging.getLogger("hnet.train")
+    logger = logging.getLogger("hnet.train")
+    logger.handlers.clear()
+    logger.setLevel(logging.INFO)
+
+    handler = logging.StreamHandler()
+    handler.setFormatter(logging.Formatter("%(message)s"))
+    logger.addHandler(handler)
+    logger.propagate = False
+    return logger
 
 
 def set_seed(seed: int) -> None:
@@ -51,7 +54,9 @@ def format_parameter_count(count: int) -> str:
     return f"{count:,}"
 
 
-def create_model(training_config: TrainingConfig, device: torch.device) -> HNetForCausalLM:
+def create_model(
+    training_config: TrainingConfig, device: torch.device
+) -> HNetForCausalLM:
     config = load_hnet_config(training_config.model_config_path)
     model = HNetForCausalLM(config, device=device, dtype=torch.bfloat16)
     model.init_weights()
@@ -59,7 +64,9 @@ def create_model(training_config: TrainingConfig, device: torch.device) -> HNetF
     return model
 
 
-def create_dataloader(training_config: TrainingConfig) -> DataLoader[dict[str, torch.Tensor]]:
+def create_dataloader(
+    training_config: TrainingConfig,
+) -> DataLoader[dict[str, torch.Tensor]]:
     dataset = StreamingByteDataset(
         sources=training_config.datasets,
         seq_len=training_config.seq_len,
@@ -89,7 +96,9 @@ def compute_ratio_loss(
     return torch.stack(losses).mean()
 
 
-def apply_weight_decay(param_groups: list[dict[str, object]], weight_decay: float) -> None:
+def apply_weight_decay(
+    param_groups: list[dict[str, object]], weight_decay: float
+) -> None:
     for group in param_groups:
         if "weight_decay" not in group:
             group["weight_decay"] = weight_decay
@@ -205,7 +214,9 @@ def train(training_config: TrainingConfig) -> None:
             ratio_loss_value += float(ratio_loss.detach())
 
         scaler.unscale_(optimizer)
-        torch.nn.utils.clip_grad_norm_(model.parameters(), training_config.grad_clip_norm)
+        torch.nn.utils.clip_grad_norm_(
+            model.parameters(), training_config.grad_clip_norm
+        )
         scaler.step(optimizer)
         scaler.update()
 

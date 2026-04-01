@@ -1,4 +1,5 @@
 import csv
+import json
 import logging
 import math
 import random
@@ -155,23 +156,40 @@ def apply_learning_rate(optimizer: AdamW, base_learning_rate: float) -> None:
         group["lr"] = base_learning_rate * multiplier
 
 
-def cosine_schedule(
+def wsd_schedule(
     step: int,
-    warmup_steps: int,
-    max_steps: int | None,
+    total_steps: int,
     max_lr: float,
     min_lr: float,
+    warmup_ratio: float = 0.1,
+    decay_ratio: float = 0.2,
+    inverse_sqrt_span: float = 100.0,
 ) -> float:
-    if step < warmup_steps:
-        return max_lr * float(step + 1) / float(max(1, warmup_steps))
+    warmup_steps = max(1, int(total_steps * warmup_ratio))
+    decay_steps = max(1, int(total_steps * decay_ratio))
+    stable_end = max(warmup_steps, total_steps - decay_steps)
 
-    if max_steps is None:
+    if step < warmup_steps:
+        return max_lr * float(step + 1) / float(warmup_steps)
+
+    if step < stable_end:
         return max_lr
 
-    progress = (step - warmup_steps) / float(max(1, max_steps - warmup_steps))
-    progress = min(max(progress, 0.0), 1.0)
-    cosine = 0.5 * (1.0 + math.cos(math.pi * progress))
-    return min_lr + (max_lr - min_lr) * cosine
+    decay_progress = (step - stable_end) / float(max(1, total_steps - stable_end))
+    decay_progress = min(max(decay_progress, 0.0), 1.0)
+    end_value = 1.0 / math.sqrt(inverse_sqrt_span)
+    current_value = 1.0 / math.sqrt(1.0 + decay_progress * (inverse_sqrt_span - 1.0))
+    normalized = (current_value - end_value) / max(1e-8, (1.0 - end_value))
+    return min_lr + (max_lr - min_lr) * normalized
+
+
+def save_training_config(training_config: TrainingConfig, output_path: Path) -> Path:
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    output_path.write_text(
+        json.dumps(asdict(training_config), ensure_ascii=False, indent=4) + "\n",
+        encoding="utf-8",
+    )
+    return output_path
 
 
 def estimate_dataset_examples(training_config: TrainingConfig) -> tuple[int | None, int | None]:
@@ -189,6 +207,11 @@ def estimate_dataset_examples(training_config: TrainingConfig) -> tuple[int | No
         training_config.batch_size * training_config.grad_accum_steps
     )
     return total_examples, optimizer_steps
+
+
+def count_epoch_micro_batches(training_config: TrainingConfig) -> int:
+    dataloader = create_dataloader(training_config)
+    return sum(1 for _ in dataloader)
 
 
 def save_checkpoint(
@@ -226,6 +249,10 @@ def train(training_config: TrainingConfig) -> None:
     output_dir = Path(training_config.output_dir)
     saved_config_path = save_hnet_config(model_config, output_dir / "model_config.json")
     logger.info("saved_model_config=%s", saved_config_path)
+    saved_training_config_path = save_training_config(
+        training_config, output_dir / "training_config.json"
+    )
+    logger.info("saved_training_config=%s", saved_training_config_path)
 
     metrics_logger = TrainingMetricsLogger(output_dir / "training_metrics.csv")
     logger.info("training_metrics_csv=%s", metrics_logger.output_path)
@@ -240,10 +267,22 @@ def train(training_config: TrainingConfig) -> None:
             estimated_optimizer_steps,
         )
 
-    effective_max_steps = training_config.max_steps
-    if effective_max_steps is None and estimated_optimizer_steps is not None:
-        effective_max_steps = estimated_optimizer_steps
-    logger.info("effective_max_steps=%s", effective_max_steps)
+    epoch_micro_batches: int | None = None
+    if training_config.max_steps is None:
+        logger.info("counting_epoch_micro_batches=true")
+        epoch_micro_batches = count_epoch_micro_batches(training_config)
+        logger.info("epoch_micro_batches=%d", epoch_micro_batches)
+
+    if training_config.max_steps is None:
+        if epoch_micro_batches is None:
+            raise RuntimeError("failed to compute epoch_micro_batches")
+        target_steps = max(
+            1, math.ceil(epoch_micro_batches / training_config.grad_accum_steps)
+        )
+    else:
+        target_steps = training_config.max_steps
+    logger.info("target_optimizer_steps=%s", target_steps)
+    logger.info("lr_schedule=wsd warmup=10%% stable=70%% decay=20%% decay_shape=inverse_sqrt")
 
     total_params, trainable_params = count_parameters(model)
     logger.info(
@@ -265,16 +304,15 @@ def train(training_config: TrainingConfig) -> None:
     last_saved_step = 0
     completed_steps = 0
 
-    while training_config.max_steps is None or completed_steps < training_config.max_steps:
+    while completed_steps < target_steps:
         optimizer.zero_grad(set_to_none=True)
         ce_loss_value = 0.0
         ratio_loss_value = 0.0
         micro_batches_processed = 0
 
-        learning_rate = cosine_schedule(
+        learning_rate = wsd_schedule(
             step=completed_steps,
-            warmup_steps=training_config.warmup_steps,
-            max_steps=effective_max_steps,
+            total_steps=target_steps,
             max_lr=training_config.learning_rate,
             min_lr=training_config.min_learning_rate,
         )
@@ -316,6 +354,11 @@ def train(training_config: TrainingConfig) -> None:
             ratio_loss_value += float(ratio_loss.detach())
 
         if micro_batches_processed == 0:
+            logger.warning(
+                "data_exhausted_before_target=true completed_steps=%d target_steps=%d",
+                completed_steps,
+                target_steps,
+            )
             break
 
         if use_grad_scaler:
@@ -342,9 +385,12 @@ def train(training_config: TrainingConfig) -> None:
         )
 
         if completed_steps % training_config.log_every == 0 or completed_steps == 1:
+            epoch_progress = 100.0 * completed_steps / float(max(1, target_steps))
             logger.info(
-                "step=%d lr=%.6g ce_loss=%.4f ratio_loss=%.4f total_loss=%.4f",
+                "step=%d/%d epoch_progress=%.2f%% lr=%.6g ce_loss=%.4f ratio_loss=%.4f total_loss=%.4f",
                 completed_steps,
+                target_steps,
+                epoch_progress,
                 learning_rate,
                 average_ce,
                 average_ratio,

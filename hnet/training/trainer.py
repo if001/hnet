@@ -254,6 +254,8 @@ def train(training_config: TrainingConfig) -> None:
     model.train()
     scaler = torch.amp.GradScaler("cuda", enabled=use_grad_scaler)
 
+    last_saved_step = 0
+
     for step in range(training_config.max_steps):
         optimizer.zero_grad(set_to_none=True)
         ce_loss_value = 0.0
@@ -338,4 +340,14 @@ def train(training_config: TrainingConfig) -> None:
                 step=step + 1,
                 output_dir=output_dir,
             )
+            last_saved_step = step + 1
             logger.info("saved_checkpoint=%s", checkpoint_path)
+
+    if training_config.max_steps > 0 and last_saved_step != training_config.max_steps:
+        checkpoint_path = save_checkpoint(
+            model=model,
+            optimizer=optimizer,
+            step=training_config.max_steps,
+            output_dir=output_dir,
+        )
+        logger.info("saved_final_checkpoint=%s", checkpoint_path)

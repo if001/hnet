@@ -1,3 +1,4 @@
+import csv
 import logging
 import math
 import random
@@ -10,11 +11,46 @@ import torch.nn.functional as F
 from torch.optim import AdamW
 from torch.utils.data import DataLoader
 
+from ..models.config_hnet import HNetConfig
 from ..models.config_io import load_hnet_config, save_hnet_config
 from ..models.mixer_seq import HNetForCausalLM
 from ..utils.train import group_params, load_balancing_loss
 from .config import TrainingConfig
 from .data import DefaultRecordFormatter, StreamingByteDataset
+
+
+class TrainingMetricsLogger:
+    fieldnames = ["step", "learning_rate", "ce_loss", "ratio_loss", "total_loss"]
+
+    def __init__(self, output_path: Path) -> None:
+        self.output_path = output_path
+        self.output_path.parent.mkdir(parents=True, exist_ok=True)
+        self._initialize_file()
+
+    def _initialize_file(self) -> None:
+        with self.output_path.open("w", encoding="utf-8", newline="") as handle:
+            writer = csv.DictWriter(handle, fieldnames=self.fieldnames)
+            writer.writeheader()
+
+    def log(
+        self,
+        step: int,
+        learning_rate: float,
+        ce_loss: float,
+        ratio_loss: float,
+        total_loss: float,
+    ) -> None:
+        with self.output_path.open("a", encoding="utf-8", newline="") as handle:
+            writer = csv.DictWriter(handle, fieldnames=self.fieldnames)
+            writer.writerow(
+                {
+                    "step": step,
+                    "learning_rate": learning_rate,
+                    "ce_loss": ce_loss,
+                    "ratio_loss": ratio_loss,
+                    "total_loss": total_loss,
+                }
+            )
 
 
 def configure_logging() -> logging.Logger:
@@ -65,7 +101,7 @@ def create_model(
     training_config: TrainingConfig,
     device: torch.device,
     dtype: torch.dtype,
-) -> tuple[HNetForCausalLM, object]:
+) -> tuple[HNetForCausalLM, HNetConfig]:
     config = load_hnet_config(training_config.model_config_path)
     model = HNetForCausalLM(config, device=device, dtype=dtype)
     model.init_weights()
@@ -171,6 +207,9 @@ def train(training_config: TrainingConfig) -> None:
     saved_config_path = save_hnet_config(model_config, output_dir / "model_config.json")
     logger.info("saved_model_config=%s", saved_config_path)
 
+    metrics_logger = TrainingMetricsLogger(output_dir / "training_metrics.csv")
+    logger.info("training_metrics_csv=%s", metrics_logger.output_path)
+
     total_params, trainable_params = count_parameters(model)
     logger.info(
         "model_parameters total=%s trainable=%s",
@@ -244,16 +283,25 @@ def train(training_config: TrainingConfig) -> None:
         else:
             optimizer.step()
 
+        average_ce = ce_loss_value / training_config.grad_accum_steps
+        average_ratio = ratio_loss_value / training_config.grad_accum_steps
+        total_loss = average_ce + training_config.train_ratio_weight * average_ratio
+        metrics_logger.log(
+            step=step + 1,
+            learning_rate=learning_rate,
+            ce_loss=average_ce,
+            ratio_loss=average_ratio,
+            total_loss=total_loss,
+        )
+
         if (step + 1) % training_config.log_every == 0 or step == 0:
-            average_ce = ce_loss_value / training_config.grad_accum_steps
-            average_ratio = ratio_loss_value / training_config.grad_accum_steps
             logger.info(
                 "step=%d lr=%.6g ce_loss=%.4f ratio_loss=%.4f total_loss=%.4f",
                 step + 1,
                 learning_rate,
                 average_ce,
                 average_ratio,
-                average_ce + training_config.train_ratio_weight * average_ratio,
+                total_loss,
             )
 
         if (step + 1) % training_config.save_every == 0:

@@ -1,11 +1,30 @@
 import argparse
 import sys
+from collections.abc import Mapping
 
 import torch
 from omegaconf import ListConfig
 
 from hnet.models import HNetForCausalLM, load_hnet_config
 from hnet.utils.tokenizers import ByteTokenizer
+
+
+def get_inference_dtype(device: str) -> torch.dtype:
+    if device == "cuda":
+        if torch.cuda.is_bf16_supported():
+            return torch.bfloat16
+        return torch.float16
+    return torch.float32
+
+
+def extract_model_state_dict(checkpoint: object) -> Mapping[str, torch.Tensor]:
+    if isinstance(checkpoint, Mapping) and "model" in checkpoint:
+        model_state = checkpoint["model"]
+        if isinstance(model_state, Mapping):
+            return model_state
+    if isinstance(checkpoint, Mapping):
+        return checkpoint
+    raise TypeError("Unsupported checkpoint format")
 
 
 def load_from_pretrained(model_path: str, model_config_path: str):
@@ -21,15 +40,17 @@ def load_from_pretrained(model_path: str, model_config_path: str):
     hnet_cfg = load_hnet_config(model_config_path)
 
     device = "cuda" if torch.cuda.is_available() else "cpu"
-    model = HNetForCausalLM(hnet_cfg, device=device, dtype=torch.bfloat16)
+    inference_dtype = get_inference_dtype(device)
+    model = HNetForCausalLM(hnet_cfg, device=device, dtype=inference_dtype)
     model.eval()
 
-    major, minor = map(int, torch.__version__.split('.')[:2])
+    major, minor = map(int, torch.__version__.split(".")[:2])
     if (major, minor) >= (2, 6):
         with torch.serialization.safe_globals([ListConfig]):
-            state_dict = torch.load(model_path, map_location=device, weights_only=False)
+            checkpoint = torch.load(model_path, map_location=device, weights_only=False)
     else:
-        state_dict = torch.load(model_path, map_location=device)
+        checkpoint = torch.load(model_path, map_location=device)
+    state_dict = extract_model_state_dict(checkpoint)
     model.load_state_dict(state_dict)
 
     return model
@@ -42,7 +63,7 @@ def generate(
     temperature: float = 1.0,
     top_p: float = 0.9,
 ):
-    """Generate text from the model, yielding tokens as they're generated.
+    """Generate text from the model, yielding tokens as they are generated.
 
     Args:
         model: HNetForCausalLM model
@@ -55,6 +76,7 @@ def generate(
         Generated text token by token as strings
     """
     device = next(model.parameters()).device
+    inference_dtype = next(model.parameters()).dtype
     tokenizer = ByteTokenizer()
 
     encoded = tokenizer.encode([prompt], add_bos=True)[0]
@@ -63,7 +85,7 @@ def generate(
     ).unsqueeze(0)
 
     inference_cache = model.allocate_inference_cache(
-        1, input_ids.shape[1] + max_tokens, dtype=torch.bfloat16
+        1, input_ids.shape[1] + max_tokens, dtype=inference_dtype
     )
 
     with torch.inference_mode():
@@ -138,7 +160,7 @@ def main():
     print("Loading model...")
     try:
         model = load_from_pretrained(args.model_path, args.config_path)
-        print("Model loaded successfully!")
+        print("Model loaded successfully.")
     except Exception as e:
         print(f"Error loading model: {e}")
         sys.exit(1)

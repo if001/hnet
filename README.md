@@ -1,4 +1,71 @@
 # H-Net
+H-Netの学習コード
+
+Colab上で実行する想定の日本語データセット学習用
+
+## Install
+Colab での最小セットアップ例です。
+
+```sh
+!pip install torch==2.10.0 torchvision==0.25.0 torchaudio==2.10.0 --index-url https://download.pytorch.org/whl/cu130
+!pip install -v mamba-ssm[causal-conv1d] --no-build-isolation
+!pip install 'triton>=3.6.0' \
+'flash_attn==2.8.0.post2' \
+'datasets>=3.0.0' \
+einops optree regex omegaconf \
+'rich>=13.9.0' \
+'matplotlib>=3.9.0'
+```
+
+## Train
+`--dataset` を指定した場合はそれを優先し、未指定時は `--dataset-template` を使えます。
+`--max-steps` を省略すると、設定したデータセットを使い切るまで学習します。
+
+```sh
+!python train.py \
+--dataset-template SOURCES_JA9_EN0_CODE1 \
+--save-every 1000 \
+--output-dir artifacts/hnet_1stage_100m
+```
+
+個別 dataset を直接渡す例:
+
+```sh
+!python train.py \
+--dataset if001/bunpo_phi4_ctx \
+--dataset if001/bunpo_phi4 \
+--max-steps 2000 \
+--save-every 1000 \
+--output-dir artifacts/hnet_1stage_100m
+```
+
+主な出力ファイル:
+- `artifacts/.../checkpoint_step_XXXXXX.pt`
+- `artifacts/.../model_config.json`
+- `artifacts/.../training_metrics.csv`
+
+## Metrics
+学習ログは `training_metrics.csv` に保存されます。あとから PNG に描画できます。
+
+```sh
+!python plot_training_log.py \
+--csv-path artifacts/hnet_1stage_100m/training_metrics.csv \
+--output-path artifacts/hnet_1stage_100m/training_metrics.png
+```
+
+## Inference
+学習済み checkpoint と保存された `model_config.json` を指定します。
+
+```sh
+!python generate.py \
+--model-path artifacts/hnet_1stage_100m/checkpoint_step_000020.pt \
+--config-path artifacts/hnet_1stage_100m/model_config.json
+```
+
+---
+
+# H-Net Original
+
 
 <table width="100%">
   <tr>

@@ -192,7 +192,9 @@ def save_training_config(training_config: TrainingConfig, output_path: Path) -> 
     return output_path
 
 
-def estimate_dataset_examples(training_config: TrainingConfig) -> tuple[int | None, int | None]:
+def estimate_dataset_examples(
+    training_config: TrainingConfig,
+) -> tuple[int | None, int | None]:
     example_counts = []
     for source in training_config.datasets:
         if source.take_examples <= 0:
@@ -207,11 +209,6 @@ def estimate_dataset_examples(training_config: TrainingConfig) -> tuple[int | No
         training_config.batch_size * training_config.grad_accum_steps
     )
     return total_examples, optimizer_steps
-
-
-def count_epoch_micro_batches(training_config: TrainingConfig) -> int:
-    dataloader = create_dataloader(training_config)
-    return sum(1 for _ in dataloader)
 
 
 def save_checkpoint(
@@ -257,7 +254,9 @@ def train(training_config: TrainingConfig) -> None:
     metrics_logger = TrainingMetricsLogger(output_dir / "training_metrics.csv")
     logger.info("training_metrics_csv=%s", metrics_logger.output_path)
 
-    estimated_examples, estimated_optimizer_steps = estimate_dataset_examples(training_config)
+    estimated_examples, estimated_optimizer_steps = estimate_dataset_examples(
+        training_config
+    )
     if estimated_examples is None:
         logger.info("dataset_examples_estimate=unavailable")
     else:
@@ -267,22 +266,26 @@ def train(training_config: TrainingConfig) -> None:
             estimated_optimizer_steps,
         )
 
-    epoch_micro_batches: int | None = None
-    if training_config.max_steps is None:
-        logger.info("counting_epoch_micro_batches=true")
-        epoch_micro_batches = count_epoch_micro_batches(training_config)
-        logger.info("epoch_micro_batches=%d", epoch_micro_batches)
-
-    if training_config.max_steps is None:
-        if epoch_micro_batches is None:
-            raise RuntimeError("failed to compute epoch_micro_batches")
-        target_steps = max(
-            1, math.ceil(epoch_micro_batches / training_config.grad_accum_steps)
-        )
+    target_steps = training_config.max_steps
+    if target_steps is None:
+        logger.info("epoch_count_mode=streaming_no_prescan")
+        if estimated_optimizer_steps is not None:
+            logger.info(
+                "target_optimizer_steps_estimate=%d (used for approximate progress and lr decay)",
+                estimated_optimizer_steps,
+            )
+        else:
+            logger.info("target_optimizer_steps_estimate=unavailable")
     else:
-        target_steps = training_config.max_steps
-    logger.info("target_optimizer_steps=%s", target_steps)
-    logger.info("lr_schedule=wsd warmup=10%% stable=70%% decay=20%% decay_shape=inverse_sqrt")
+        logger.info("target_optimizer_steps=%s", target_steps)
+
+    lr_total_steps = target_steps or estimated_optimizer_steps
+    if lr_total_steps is None:
+        logger.info("lr_schedule=warmup_then_constant (no total_steps estimate)")
+    else:
+        logger.info(
+            "lr_schedule=wsd warmup=10%% stable=70%% decay=20%% decay_shape=inverse_sqrt"
+        )
 
     total_params, trainable_params = count_parameters(model)
     logger.info(
@@ -304,18 +307,28 @@ def train(training_config: TrainingConfig) -> None:
     last_saved_step = 0
     completed_steps = 0
 
-    while completed_steps < target_steps:
+    while training_config.max_steps is None or completed_steps < training_config.max_steps:
         optimizer.zero_grad(set_to_none=True)
         ce_loss_value = 0.0
         ratio_loss_value = 0.0
         micro_batches_processed = 0
 
-        learning_rate = wsd_schedule(
-            step=completed_steps,
-            total_steps=target_steps,
-            max_lr=training_config.learning_rate,
-            min_lr=training_config.min_learning_rate,
-        )
+        if lr_total_steps is None:
+            if completed_steps < training_config.warmup_steps:
+                learning_rate = (
+                    training_config.learning_rate
+                    * float(completed_steps + 1)
+                    / float(max(1, training_config.warmup_steps))
+                )
+            else:
+                learning_rate = training_config.learning_rate
+        else:
+            learning_rate = wsd_schedule(
+                step=completed_steps,
+                total_steps=lr_total_steps,
+                max_lr=training_config.learning_rate,
+                min_lr=training_config.min_learning_rate,
+            )
         apply_learning_rate(optimizer, learning_rate)
 
         for _micro_step in range(training_config.grad_accum_steps):
@@ -354,11 +367,14 @@ def train(training_config: TrainingConfig) -> None:
             ratio_loss_value += float(ratio_loss.detach())
 
         if micro_batches_processed == 0:
-            logger.warning(
-                "data_exhausted_before_target=true completed_steps=%d target_steps=%d",
-                completed_steps,
-                target_steps,
-            )
+            if training_config.max_steps is None:
+                logger.info("epoch_completed=true completed_steps=%d", completed_steps)
+            else:
+                logger.warning(
+                    "data_exhausted_before_target=true completed_steps=%d target_steps=%d",
+                    completed_steps,
+                    training_config.max_steps,
+                )
             break
 
         if use_grad_scaler:
@@ -385,17 +401,38 @@ def train(training_config: TrainingConfig) -> None:
         )
 
         if completed_steps % training_config.log_every == 0 or completed_steps == 1:
-            epoch_progress = 100.0 * completed_steps / float(max(1, target_steps))
-            logger.info(
-                "step=%d/%d epoch_progress=%.2f%% lr=%.6g ce_loss=%.4f ratio_loss=%.4f total_loss=%.4f",
-                completed_steps,
-                target_steps,
-                epoch_progress,
-                learning_rate,
-                average_ce,
-                average_ratio,
-                total_loss,
-            )
+            if training_config.max_steps is not None:
+                epoch_progress = 100.0 * completed_steps / float(max(1, training_config.max_steps))
+                logger.info(
+                    "step=%d/%d epoch_progress=%.2f%% lr=%.6g ce_loss=%.4f ratio_loss=%.4f total_loss=%.4f",
+                    completed_steps,
+                    training_config.max_steps,
+                    epoch_progress,
+                    learning_rate,
+                    average_ce,
+                    average_ratio,
+                    total_loss,
+                )
+            elif estimated_optimizer_steps is not None:
+                epoch_progress = 100.0 * completed_steps / float(max(1, estimated_optimizer_steps))
+                logger.info(
+                    "step=%d epoch_progress_est=%.2f%% lr=%.6g ce_loss=%.4f ratio_loss=%.4f total_loss=%.4f",
+                    completed_steps,
+                    epoch_progress,
+                    learning_rate,
+                    average_ce,
+                    average_ratio,
+                    total_loss,
+                )
+            else:
+                logger.info(
+                    "step=%d epoch_progress=unavailable lr=%.6g ce_loss=%.4f ratio_loss=%.4f total_loss=%.4f",
+                    completed_steps,
+                    learning_rate,
+                    average_ce,
+                    average_ratio,
+                    total_loss,
+                )
 
         if completed_steps % training_config.save_every == 0:
             checkpoint_path = save_checkpoint(

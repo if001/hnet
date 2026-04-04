@@ -20,6 +20,7 @@ class TrainingConfig:
             DatasetSource(name="if001/bunpo_phi4"),
         ]
     )
+    validation_datasets: list[DatasetSource] | None = None
     seq_len: int = 512
     batch_size: int = 2
     grad_accum_steps: int = 8
@@ -31,6 +32,8 @@ class TrainingConfig:
     grad_clip_norm: float = 1.0
     log_every: int = 10
     save_every: int = 100
+    validation_every: int = 100
+    validation_max_batches: int = 20
     train_ratio_weight: float = 0.02
     compression_ratios: list[float] = field(default_factory=lambda: [4.0])
     lr_multipliers: list[float] = field(default_factory=lambda: [1.0, 1.0])

@@ -127,6 +127,7 @@ class DefaultRecordFormatter:
 def _load_streaming_source(
     source: DatasetSource,
     shuffle_buffer_size: int,
+    shuffle: bool,
 ) -> HFIterableDataset:
     dataset = load_dataset(
         source.name,
@@ -141,7 +142,9 @@ def _load_streaming_source(
     if source.take_examples > 0:
         dataset = dataset.take(source.take_examples)
 
-    return dataset.shuffle(buffer_size=shuffle_buffer_size, seed=42)
+    if shuffle:
+        return dataset.shuffle(buffer_size=shuffle_buffer_size, seed=42)
+    return dataset
 
 
 class StreamingByteDataset(torch.utils.data.IterableDataset):
@@ -153,6 +156,7 @@ class StreamingByteDataset(torch.utils.data.IterableDataset):
         shuffle_buffer_size: int = 512,
         add_bos: bool = True,
         add_eos: bool = True,
+        shuffle: bool = True,
     ) -> None:
         super().__init__()
         self.sources = list(sources)
@@ -162,16 +166,21 @@ class StreamingByteDataset(torch.utils.data.IterableDataset):
         self.add_bos = add_bos
         self.add_eos = add_eos
         self.tokenizer = ByteTokenizer()
+        self.shuffle = shuffle
 
     def _iter_stream(self) -> Iterable[Mapping[str, object]]:
         datasets = [
-            _load_streaming_source(source, self.shuffle_buffer_size)
+            _load_streaming_source(
+                source, self.shuffle_buffer_size, shuffle=self.shuffle
+            )
             for source in self.sources
         ]
         if len(datasets) == 1:
             return datasets[0]
         merged = concatenate_datasets(datasets)
-        return merged.shuffle(buffer_size=self.shuffle_buffer_size, seed=42)
+        if self.shuffle:
+            return merged.shuffle(buffer_size=self.shuffle_buffer_size, seed=42)
+        return merged
 
     def __iter__(self) -> Iterator[dict[str, torch.Tensor]]:
         token_buffer: list[int] = []

@@ -35,6 +35,12 @@ def parse_args() -> TrainingConfig:
         choices=TEMPLATE_CHOICES,
         help="Named dataset template from hnet.training.dataset_template.",
     )
+    parser.add_argument(
+        "--validation-dataset",
+        action="append",
+        dest="validation_datasets",
+        help="Validation dataset name. Repeat to specify multiple datasets.",
+    )
     parser.add_argument("--seq-len", type=int, default=512)
     parser.add_argument("--batch-size", type=int, default=2)
     parser.add_argument("--grad-accum-steps", type=int, default=8)
@@ -46,6 +52,8 @@ def parse_args() -> TrainingConfig:
     parser.add_argument("--grad-clip-norm", type=float, default=1.0)
     parser.add_argument("--log-every", type=int, default=10)
     parser.add_argument("--save-every", type=int, default=100)
+    parser.add_argument("--validation-every", type=int, default=100)
+    parser.add_argument("--validation-max-batches", type=int, default=20)
     parser.add_argument("--train-ratio-weight", type=float, default=0.02)
     parser.add_argument(
         "--compression-ratio",
@@ -79,10 +87,17 @@ def parse_args() -> TrainingConfig:
             DatasetSource(name="if001/bunpo_phi4"),
         ]
 
+    validation_datasets = None
+    if args.validation_datasets:
+        validation_datasets = [
+            DatasetSource(name=name) for name in args.validation_datasets
+        ]
+
     return TrainingConfig(
         model_config_path=args.model_config_path,
         output_dir=args.output_dir,
         datasets=datasets,
+        validation_datasets=validation_datasets,
         seq_len=args.seq_len,
         batch_size=args.batch_size,
         grad_accum_steps=args.grad_accum_steps,
@@ -94,6 +109,8 @@ def parse_args() -> TrainingConfig:
         grad_clip_norm=args.grad_clip_norm,
         log_every=args.log_every,
         save_every=args.save_every,
+        validation_every=args.validation_every,
+        validation_max_batches=args.validation_max_batches,
         train_ratio_weight=args.train_ratio_weight,
         compression_ratios=compression_ratios,
         lr_multipliers=lr_multipliers,

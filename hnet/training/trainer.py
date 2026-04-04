@@ -5,6 +5,7 @@ import math
 import random
 from dataclasses import asdict
 from pathlib import Path
+from typing import Any
 
 import numpy as np
 import torch
@@ -16,7 +17,7 @@ from ..models.config_hnet import HNetConfig
 from ..models.config_io import load_hnet_config, save_hnet_config
 from ..models.mixer_seq import HNetForCausalLM
 from ..utils.train import group_params, load_balancing_loss
-from .config import TrainingConfig
+from .config import DatasetSource, TrainingConfig
 from .data import DefaultRecordFormatter, StreamingByteDataset
 
 
@@ -52,6 +53,36 @@ class TrainingMetricsLogger:
                     "total_loss": total_loss,
                 }
             )
+
+
+class ValidationMetricsLogger:
+    fieldnames = [
+        "step",
+        "validation_batches",
+        "validation_ce_loss",
+        "validation_bpb",
+        "avg_bytes_per_chunk",
+        "target_ratio_gap",
+        "actual_selected_fraction",
+        "mean_boundary_probability",
+        "boundary_positions_sample",
+    ]
+
+    def __init__(self, output_path: Path) -> None:
+        self.output_path = output_path
+        self.output_path.parent.mkdir(parents=True, exist_ok=True)
+        self._initialize_file()
+
+    def _initialize_file(self) -> None:
+        with self.output_path.open("w", encoding="utf-8", newline="") as handle:
+            writer = csv.DictWriter(handle, fieldnames=self.fieldnames)
+            writer.writeheader()
+
+    def log(self, step: int, metrics: dict[str, Any]) -> None:
+        payload = {"step": step, **metrics}
+        with self.output_path.open("a", encoding="utf-8", newline="") as handle:
+            writer = csv.DictWriter(handle, fieldnames=self.fieldnames)
+            writer.writerow(payload)
 
 
 def configure_logging() -> logging.Logger:
@@ -112,12 +143,15 @@ def create_model(
 
 def create_dataloader(
     training_config: TrainingConfig,
+    sources: list[DatasetSource] | None = None,
+    shuffle: bool = True,
 ) -> DataLoader[dict[str, torch.Tensor]]:
     dataset = StreamingByteDataset(
-        sources=training_config.datasets,
+        sources=sources or training_config.datasets,
         seq_len=training_config.seq_len,
         formatter=DefaultRecordFormatter(),
         shuffle_buffer_size=training_config.shuffle_buffer_size,
+        shuffle=shuffle,
     )
     return DataLoader(
         dataset,
@@ -230,6 +264,122 @@ def save_checkpoint(
     return checkpoint_path
 
 
+def _format_boundary_positions(mask: torch.Tensor, limit: int = 64) -> str:
+    indices = torch.nonzero(mask, as_tuple=False).squeeze(-1).tolist()
+    if not indices:
+        return ""
+    visible = indices[:limit]
+    text = "|".join(str(i) for i in visible)
+    if len(indices) > limit:
+        text += "|..."
+    return text
+
+
+@torch.no_grad()
+def evaluate_validation(
+    model: HNetForCausalLM,
+    training_config: TrainingConfig,
+    device: torch.device,
+    training_dtype: torch.dtype,
+    validation_sources: list[DatasetSource],
+) -> dict[str, Any] | None:
+    if training_config.validation_max_batches <= 0:
+        return None
+
+    dataloader = create_dataloader(
+        training_config,
+        sources=validation_sources,
+        shuffle=False,
+    )
+
+    ce_sum = 0.0
+    token_count = 0
+    stage_count = 0
+    selected_fraction_sum = 0.0
+    mean_prob_sum = 0.0
+    ratio_gap_sum = 0.0
+    stage0_selected_fraction_sum = 0.0
+    stage0_count = 0
+    boundary_positions_sample = ""
+
+    processed_batches = 0
+
+    for batch in dataloader:
+        if processed_batches >= training_config.validation_max_batches:
+            break
+        processed_batches += 1
+
+        input_ids = batch["input_ids"].to(device, non_blocking=True)
+        labels = batch["labels"].to(device, non_blocking=True)
+        mask = batch["mask"].to(device, non_blocking=True)
+
+        with torch.autocast(
+            device_type=device.type,
+            dtype=training_dtype,
+            enabled=device.type == "cuda",
+        ):
+            output = model(input_ids=input_ids, mask=mask)
+            ce_loss = F.cross_entropy(
+                output.logits.reshape(-1, output.logits.shape[-1]),
+                labels.reshape(-1),
+            )
+
+        tokens_in_batch = int(labels.numel())
+        ce_sum += float(ce_loss.detach()) * tokens_in_batch
+        token_count += tokens_in_batch
+
+        if not boundary_positions_sample and output.bpred_output:
+            boundary_positions_sample = _format_boundary_positions(
+                output.bpred_output[0].boundary_mask[0]
+            )
+
+        for stage_idx, router_output in enumerate(output.bpred_output):
+            selected_fraction = float(router_output.boundary_mask.float().mean().detach())
+            mean_prob = float(router_output.boundary_prob[..., -1].float().mean().detach())
+            target_ratio = training_config.compression_ratios[
+                min(stage_idx, len(training_config.compression_ratios) - 1)
+            ]
+            target_fraction = 1.0 / max(target_ratio, 1e-8)
+            ratio_gap = selected_fraction - target_fraction
+
+            selected_fraction_sum += selected_fraction
+            mean_prob_sum += mean_prob
+            ratio_gap_sum += ratio_gap
+            stage_count += 1
+
+            if stage_idx == 0:
+                stage0_selected_fraction_sum += selected_fraction
+                stage0_count += 1
+
+    if processed_batches == 0 or token_count == 0:
+        return None
+
+    validation_ce = ce_sum / token_count
+    validation_bpb = validation_ce / math.log(2.0)
+
+    actual_selected_fraction = selected_fraction_sum / max(1, stage_count)
+    mean_boundary_probability = mean_prob_sum / max(1, stage_count)
+    target_ratio_gap = ratio_gap_sum / max(1, stage_count)
+
+    if stage0_count > 0:
+        stage0_selected_fraction = stage0_selected_fraction_sum / stage0_count
+    else:
+        stage0_selected_fraction = actual_selected_fraction
+
+    avg_bytes_per_chunk = 1.0 / max(stage0_selected_fraction, 1e-8)
+
+    return {
+        "validation_batches": processed_batches,
+        "validation_ce_loss": validation_ce,
+        "validation_bpb": validation_bpb,
+        "avg_bytes_per_chunk": avg_bytes_per_chunk,
+        "target_ratio_gap": target_ratio_gap,
+        "actual_selected_fraction": actual_selected_fraction,
+        "mean_boundary_probability": mean_boundary_probability,
+        "boundary_positions_sample": boundary_positions_sample,
+    }
+
+
 def train(training_config: TrainingConfig) -> None:
     logger = configure_logging()
     set_seed(training_config.seed)
@@ -253,6 +403,9 @@ def train(training_config: TrainingConfig) -> None:
 
     metrics_logger = TrainingMetricsLogger(output_dir / "training_metrics.csv")
     logger.info("training_metrics_csv=%s", metrics_logger.output_path)
+
+    validation_metrics_logger = ValidationMetricsLogger(output_dir / "validation_metrics.csv")
+    logger.info("validation_metrics_csv=%s", validation_metrics_logger.output_path)
 
     estimated_examples, estimated_optimizer_steps = estimate_dataset_examples(
         training_config
@@ -294,12 +447,14 @@ def train(training_config: TrainingConfig) -> None:
         format_parameter_count(trainable_params),
     )
 
-    dataloader = create_dataloader(training_config)
+    dataloader = create_dataloader(training_config, shuffle=True)
     data_iterator = iter(dataloader)
 
     param_groups = group_params(model)
     apply_weight_decay(param_groups, training_config.weight_decay)
     optimizer = AdamW(param_groups, betas=(0.9, 0.95), eps=1e-8)
+
+    validation_sources = training_config.validation_datasets or training_config.datasets
 
     model.train()
     scaler = torch.amp.GradScaler("cuda", enabled=use_grad_scaler)
@@ -402,7 +557,9 @@ def train(training_config: TrainingConfig) -> None:
 
         if completed_steps % training_config.log_every == 0 or completed_steps == 1:
             if training_config.max_steps is not None:
-                epoch_progress = 100.0 * completed_steps / float(max(1, training_config.max_steps))
+                epoch_progress = 100.0 * completed_steps / float(
+                    max(1, training_config.max_steps)
+                )
                 logger.info(
                     "step=%d/%d epoch_progress=%.2f%% lr=%.6g ce_loss=%.4f ratio_loss=%.4f total_loss=%.4f",
                     completed_steps,
@@ -414,7 +571,9 @@ def train(training_config: TrainingConfig) -> None:
                     total_loss,
                 )
             elif estimated_optimizer_steps is not None:
-                epoch_progress = 100.0 * completed_steps / float(max(1, estimated_optimizer_steps))
+                epoch_progress = 100.0 * completed_steps / float(
+                    max(1, estimated_optimizer_steps)
+                )
                 logger.info(
                     "step=%d epoch_progress_est=%.2f%% lr=%.6g ce_loss=%.4f ratio_loss=%.4f total_loss=%.4f",
                     completed_steps,
@@ -432,6 +591,36 @@ def train(training_config: TrainingConfig) -> None:
                     average_ce,
                     average_ratio,
                     total_loss,
+                )
+
+        if (
+            training_config.validation_every > 0
+            and completed_steps % training_config.validation_every == 0
+        ):
+            model.eval()
+            validation_metrics = evaluate_validation(
+                model=model,
+                training_config=training_config,
+                device=device,
+                training_dtype=training_dtype,
+                validation_sources=validation_sources,
+            )
+            model.train()
+
+            if validation_metrics is not None:
+                validation_metrics_logger.log(
+                    step=completed_steps,
+                    metrics=validation_metrics,
+                )
+                logger.info(
+                    "validation step=%d ce=%.4f bpb=%.4f bytes_per_chunk=%.3f ratio_gap=%.4f selected_frac=%.4f mean_boundary_prob=%.4f",
+                    completed_steps,
+                    validation_metrics["validation_ce_loss"],
+                    validation_metrics["validation_bpb"],
+                    validation_metrics["avg_bytes_per_chunk"],
+                    validation_metrics["target_ratio_gap"],
+                    validation_metrics["actual_selected_fraction"],
+                    validation_metrics["mean_boundary_probability"],
                 )
 
         if completed_steps % training_config.save_every == 0:

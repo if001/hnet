@@ -94,7 +94,7 @@ SOURCES_JA45_EN45_CODE1: list[DatasetSource] = [
 ## 8:1:1
 ## chatGPTの概算では通常のtokenizerで1B Token程度
 ## byte levelでは大きすぎるので一度保留
-_SOURCES_JA8_EN1_CODE1: list[DatasetSource] = [
+SOURCES_JA8_EN1_CODE1_10: list[DatasetSource] = [
     DatasetSource(
         name="hotchpotch/fineweb-2-edu-japanese",
         config_name="small_tokens_cleaned",
@@ -129,7 +129,7 @@ _SOURCES_JA8_EN1_CODE1: list[DatasetSource] = [
 
 
 # 9:0:1
-_SOURCES_JA9_EN0_CODE1: list[DatasetSource] = [
+SOURCES_JA9_EN0_CODE1_10: list[DatasetSource] = [
     DatasetSource(
         name="hotchpotch/fineweb-2-edu-japanese",
         config_name="small_tokens_cleaned",
@@ -151,7 +151,7 @@ _SOURCES_JA9_EN0_CODE1: list[DatasetSource] = [
 ]
 
 
-_SOURCES_JA45_EN45_CODE1: list[DatasetSource] = [
+SOURCES_JA45_EN45_CODE1_10: list[DatasetSource] = [
     DatasetSource(
         name="hotchpotch/fineweb-2-edu-japanese",
         config_name="small_tokens_cleaned",

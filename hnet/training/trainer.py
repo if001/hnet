@@ -66,6 +66,13 @@ class ValidationMetricsLogger:
         "actual_selected_fraction",
         "mean_boundary_probability",
         "boundary_positions_sample",
+        "stage0_selected_fraction",
+        "stage1_selected_fraction",
+        "stage0_target_ratio_gap",
+        "stage1_target_ratio_gap",
+        "compression_l1_l0",
+        "compression_l2_l1",
+        "compression_l2_l0",
     ]
 
     def __init__(self, output_path: Path) -> None:
@@ -294,13 +301,12 @@ def evaluate_validation(
 
     ce_sum = 0.0
     token_count = 0
-    stage_count = 0
-    selected_fraction_sum = 0.0
-    mean_prob_sum = 0.0
-    ratio_gap_sum = 0.0
-    stage0_selected_fraction_sum = 0.0
-    stage0_count = 0
     boundary_positions_sample = ""
+
+    selected_sum_by_stage: list[float] = []
+    mean_prob_sum_by_stage: list[float] = []
+    ratio_gap_sum_by_stage: list[float] = []
+    count_by_stage: list[int] = []
 
     processed_batches = 0
 
@@ -334,6 +340,12 @@ def evaluate_validation(
             )
 
         for stage_idx, router_output in enumerate(output.bpred_output):
+            while len(selected_sum_by_stage) <= stage_idx:
+                selected_sum_by_stage.append(0.0)
+                mean_prob_sum_by_stage.append(0.0)
+                ratio_gap_sum_by_stage.append(0.0)
+                count_by_stage.append(0)
+
             selected_fraction = float(router_output.boundary_mask.float().mean().detach())
             mean_prob = float(router_output.boundary_prob[..., -1].float().mean().detach())
             target_ratio = training_config.compression_ratios[
@@ -342,14 +354,10 @@ def evaluate_validation(
             target_fraction = 1.0 / max(target_ratio, 1e-8)
             ratio_gap = selected_fraction - target_fraction
 
-            selected_fraction_sum += selected_fraction
-            mean_prob_sum += mean_prob
-            ratio_gap_sum += ratio_gap
-            stage_count += 1
-
-            if stage_idx == 0:
-                stage0_selected_fraction_sum += selected_fraction
-                stage0_count += 1
+            selected_sum_by_stage[stage_idx] += selected_fraction
+            mean_prob_sum_by_stage[stage_idx] += mean_prob
+            ratio_gap_sum_by_stage[stage_idx] += ratio_gap
+            count_by_stage[stage_idx] += 1
 
     if processed_batches == 0 or token_count == 0:
         return None
@@ -357,16 +365,37 @@ def evaluate_validation(
     validation_ce = ce_sum / token_count
     validation_bpb = validation_ce / math.log(2.0)
 
-    actual_selected_fraction = selected_fraction_sum / max(1, stage_count)
-    mean_boundary_probability = mean_prob_sum / max(1, stage_count)
-    target_ratio_gap = ratio_gap_sum / max(1, stage_count)
+    selected_fraction_by_stage: list[float] = []
+    target_ratio_gap_by_stage: list[float] = []
+    mean_prob_by_stage: list[float] = []
+    for idx, count in enumerate(count_by_stage):
+        denom = max(1, count)
+        selected_fraction_by_stage.append(selected_sum_by_stage[idx] / denom)
+        target_ratio_gap_by_stage.append(ratio_gap_sum_by_stage[idx] / denom)
+        mean_prob_by_stage.append(mean_prob_sum_by_stage[idx] / denom)
 
-    if stage0_count > 0:
-        stage0_selected_fraction = stage0_selected_fraction_sum / stage0_count
+    if selected_fraction_by_stage:
+        actual_selected_fraction = sum(selected_fraction_by_stage) / len(selected_fraction_by_stage)
+        mean_boundary_probability = sum(mean_prob_by_stage) / len(mean_prob_by_stage)
+        target_ratio_gap = sum(target_ratio_gap_by_stage) / len(target_ratio_gap_by_stage)
     else:
-        stage0_selected_fraction = actual_selected_fraction
+        actual_selected_fraction = 0.0
+        mean_boundary_probability = 0.0
+        target_ratio_gap = 0.0
 
-    avg_bytes_per_chunk = 1.0 / max(stage0_selected_fraction, 1e-8)
+    stage0_selected_fraction = selected_fraction_by_stage[0] if len(selected_fraction_by_stage) > 0 else float("nan")
+    stage1_selected_fraction = selected_fraction_by_stage[1] if len(selected_fraction_by_stage) > 1 else float("nan")
+    stage0_target_ratio_gap = target_ratio_gap_by_stage[0] if len(target_ratio_gap_by_stage) > 0 else float("nan")
+    stage1_target_ratio_gap = target_ratio_gap_by_stage[1] if len(target_ratio_gap_by_stage) > 1 else float("nan")
+
+    avg_bytes_per_chunk = 1.0 / max(stage0_selected_fraction, 1e-8) if not math.isnan(stage0_selected_fraction) else float("nan")
+    compression_l1_l0 = avg_bytes_per_chunk
+    compression_l2_l1 = 1.0 / max(stage1_selected_fraction, 1e-8) if not math.isnan(stage1_selected_fraction) else float("nan")
+
+    if not math.isnan(stage0_selected_fraction) and not math.isnan(stage1_selected_fraction):
+        compression_l2_l0 = 1.0 / max(stage0_selected_fraction * stage1_selected_fraction, 1e-8)
+    else:
+        compression_l2_l0 = float("nan")
 
     return {
         "validation_batches": processed_batches,
@@ -377,6 +406,13 @@ def evaluate_validation(
         "actual_selected_fraction": actual_selected_fraction,
         "mean_boundary_probability": mean_boundary_probability,
         "boundary_positions_sample": boundary_positions_sample,
+        "stage0_selected_fraction": stage0_selected_fraction,
+        "stage1_selected_fraction": stage1_selected_fraction,
+        "stage0_target_ratio_gap": stage0_target_ratio_gap,
+        "stage1_target_ratio_gap": stage1_target_ratio_gap,
+        "compression_l1_l0": compression_l1_l0,
+        "compression_l2_l1": compression_l2_l1,
+        "compression_l2_l0": compression_l2_l0,
     }
 
 
@@ -613,14 +649,17 @@ def train(training_config: TrainingConfig) -> None:
                     metrics=validation_metrics,
                 )
                 logger.info(
-                    "validation step=%d ce=%.4f bpb=%.4f bytes_per_chunk=%.3f ratio_gap=%.4f selected_frac=%.4f mean_boundary_prob=%.4f",
+                    "validation step=%d ce=%.4f bpb=%.4f comp(L1/L0)=%.3f comp(L2/L1)=%.3f comp(L2/L0)=%.3f sf0=%.4f sf1=%.4f gap0=%.4f gap1=%.4f",
                     completed_steps,
                     validation_metrics["validation_ce_loss"],
                     validation_metrics["validation_bpb"],
-                    validation_metrics["avg_bytes_per_chunk"],
-                    validation_metrics["target_ratio_gap"],
-                    validation_metrics["actual_selected_fraction"],
-                    validation_metrics["mean_boundary_probability"],
+                    validation_metrics["compression_l1_l0"],
+                    validation_metrics["compression_l2_l1"],
+                    validation_metrics["compression_l2_l0"],
+                    validation_metrics["stage0_selected_fraction"],
+                    validation_metrics["stage1_selected_fraction"],
+                    validation_metrics["stage0_target_ratio_gap"],
+                    validation_metrics["stage1_target_ratio_gap"],
                 )
 
         if completed_steps % training_config.save_every == 0:

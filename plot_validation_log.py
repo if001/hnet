@@ -12,10 +12,13 @@ NUMERIC_FIELDS = [
     "step",
     "validation_ce_loss",
     "validation_bpb",
-    "avg_bytes_per_chunk",
-    "target_ratio_gap",
-    "actual_selected_fraction",
-    "mean_boundary_probability",
+    "compression_l1_l0",
+    "compression_l2_l1",
+    "compression_l2_l0",
+    "stage0_selected_fraction",
+    "stage1_selected_fraction",
+    "stage0_target_ratio_gap",
+    "stage1_target_ratio_gap",
 ]
 
 
@@ -25,14 +28,15 @@ def load_validation_metrics(csv_path: Path) -> dict[str, list[float]]:
         reader = csv.DictReader(handle)
         for row in reader:
             for key in NUMERIC_FIELDS:
-                metrics[key].append(float(row[key]))
+                raw = row.get(key, "")
+                metrics[key].append(float(raw) if raw not in ("", None) else float("nan"))
     return metrics
 
 
 def plot_validation_metrics(csv_path: Path, output_path: Path) -> None:
     metrics = load_validation_metrics(csv_path)
 
-    fig, axes = plt.subplots(3, 1, figsize=(11, 11), sharex=True)
+    fig, axes = plt.subplots(4, 1, figsize=(11, 14), sharex=True)
 
     axes[0].plot(metrics["step"], metrics["validation_ce_loss"], label="val_ce")
     axes[0].plot(metrics["step"], metrics["validation_bpb"], label="val_bpb")
@@ -40,19 +44,26 @@ def plot_validation_metrics(csv_path: Path, output_path: Path) -> None:
     axes[0].legend()
     axes[0].grid(True, alpha=0.3)
 
-    axes[1].plot(metrics["step"], metrics["avg_bytes_per_chunk"], label="avg_bytes/chunk")
-    axes[1].plot(metrics["step"], metrics["actual_selected_fraction"], label="selected_fraction")
-    axes[1].plot(metrics["step"], metrics["mean_boundary_probability"], label="mean_boundary_prob")
-    axes[1].set_ylabel("chunking")
+    axes[1].plot(metrics["step"], metrics["compression_l1_l0"], label="L1/L0")
+    axes[1].plot(metrics["step"], metrics["compression_l2_l1"], label="L2/L1")
+    axes[1].plot(metrics["step"], metrics["compression_l2_l0"], label="L2/L0")
+    axes[1].set_ylabel("compression")
     axes[1].legend()
     axes[1].grid(True, alpha=0.3)
 
-    axes[2].plot(metrics["step"], metrics["target_ratio_gap"], color="tab:red", label="target_ratio_gap")
-    axes[2].axhline(0.0, color="black", linewidth=1.0, alpha=0.5)
-    axes[2].set_xlabel("step")
-    axes[2].set_ylabel("gap")
+    axes[2].plot(metrics["step"], metrics["stage0_selected_fraction"], label="selected_fraction_s0")
+    axes[2].plot(metrics["step"], metrics["stage1_selected_fraction"], label="selected_fraction_s1")
+    axes[2].set_ylabel("selected_frac")
     axes[2].legend()
     axes[2].grid(True, alpha=0.3)
+
+    axes[3].plot(metrics["step"], metrics["stage0_target_ratio_gap"], label="target_gap_s0")
+    axes[3].plot(metrics["step"], metrics["stage1_target_ratio_gap"], label="target_gap_s1")
+    axes[3].axhline(0.0, color="black", linewidth=1.0, alpha=0.5)
+    axes[3].set_xlabel("step")
+    axes[3].set_ylabel("target_gap")
+    axes[3].legend()
+    axes[3].grid(True, alpha=0.3)
 
     fig.tight_layout()
     output_path.parent.mkdir(parents=True, exist_ok=True)

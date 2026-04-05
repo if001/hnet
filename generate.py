@@ -1,4 +1,5 @@
 import argparse
+import codecs
 import sys
 from collections.abc import Mapping
 
@@ -73,12 +74,11 @@ def generate(
         top_p: Top-p sampling parameter
 
     Yields:
-        Generated text token by token as strings
+        Generated token ids (byte values) one by one
     """
     device = next(model.parameters()).device
     inference_dtype = next(model.parameters()).dtype
     tokenizer = ByteTokenizer()
-
     encoded = tokenizer.encode([prompt], add_bos=True)[0]
     input_ids = torch.tensor(
         encoded["input_ids"], dtype=torch.long, device=device
@@ -115,12 +115,32 @@ def generate(
             break
 
         current_token = next_token.unsqueeze(0)
-        yield current_token
+        yield int(next_token.item())
 
         with torch.inference_mode():
             output = model.step(current_token, inference_cache)
 
         logits = output.logits[0, -1, :] / temperature
+
+
+def stream_generate_and_print(model, prompt: str, max_tokens: int, temperature: float, top_p: float) -> None:
+    print(f"\033[92m{prompt}\033[0m", end="")
+    decoder = codecs.getincrementaldecoder("utf-8")(errors="replace")
+
+    for token_id in generate(
+        model,
+        prompt,
+        max_tokens=max_tokens,
+        temperature=temperature,
+        top_p=top_p,
+    ):
+        chunk = decoder.decode(bytes([token_id]), final=False)
+        if chunk:
+            print(chunk, end="", flush=True)
+
+    tail = decoder.decode(b"", final=True)
+    if tail:
+        print(tail, end="", flush=True)
 
 
 def main():
@@ -171,8 +191,6 @@ def main():
         print(f"Error loading model: {e}")
         sys.exit(1)
 
-    tokenizer = ByteTokenizer()
-
     if args.prompts:
         for index, prompt in enumerate(args.prompts, start=1):
             prompt = prompt.strip()
@@ -183,31 +201,13 @@ def main():
                 f"\n[{index}/{len(args.prompts)}] Generating "
                 f"(max_tokens={args.max_tokens}, temperature={args.temperature}, top_p={args.top_p})"
             )
-            print(f"\033[92m{prompt}\033[0m", end="")
-            buf = []
-
-            for token in generate(
+            stream_generate_and_print(
                 model,
                 prompt,
                 max_tokens=args.max_tokens,
                 temperature=args.temperature,
                 top_p=args.top_p,
-            ):
-                buf.append(token)
-
-                decoded = None
-                res = None
-                for j in range(1, min(len(buf), 4)):
-                    try:
-                        res = tokenizer.decode(buf[:j])
-                        decoded = j
-                    except Exception:
-                        pass
-
-                if res is not None:
-                    print(res, end="", flush=True)
-                    buf = buf[decoded:]
-
+            )
             print()
         return
 
@@ -221,30 +221,13 @@ def main():
             f"\nGenerating (max_tokens={args.max_tokens}, temperature={args.temperature}, top_p={args.top_p})"
         )
 
-        print(f"\033[92m{prompt}\033[0m", end="")
-        buf = []
-
-        for token in generate(
+        stream_generate_and_print(
             model,
             prompt,
             max_tokens=args.max_tokens,
             temperature=args.temperature,
             top_p=args.top_p,
-        ):
-            buf.append(token)
-
-            decoded = None
-            res = None
-            for j in range(1, min(len(buf), 4)):
-                try:
-                    res = tokenizer.decode(buf[:j])
-                    decoded = j
-                except Exception:
-                    pass
-
-            if res is not None:
-                print(res, end="", flush=True)
-                buf = buf[decoded:]
+        )
 
 
 if __name__ == "__main__":

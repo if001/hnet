@@ -155,6 +155,12 @@ def main():
         default=1.0,
         help="Top-p sampling parameter (default: 1.0)",
     )
+    parser.add_argument(
+        "--prompt",
+        action="append",
+        dest="prompts",
+        help="Prompt text. Repeat this option to generate from multiple prompts.",
+    )
     args = parser.parse_args()
 
     print("Loading model...")
@@ -166,6 +172,44 @@ def main():
         sys.exit(1)
 
     tokenizer = ByteTokenizer()
+
+    if args.prompts:
+        for index, prompt in enumerate(args.prompts, start=1):
+            prompt = prompt.strip()
+            if not prompt:
+                continue
+
+            print(
+                f"\n[{index}/{len(args.prompts)}] Generating "
+                f"(max_tokens={args.max_tokens}, temperature={args.temperature}, top_p={args.top_p})"
+            )
+            print(f"\033[92m{prompt}\033[0m", end="")
+            buf = []
+
+            for token in generate(
+                model,
+                prompt,
+                max_tokens=args.max_tokens,
+                temperature=args.temperature,
+                top_p=args.top_p,
+            ):
+                buf.append(token)
+
+                decoded = None
+                res = None
+                for j in range(1, min(len(buf), 4)):
+                    try:
+                        res = tokenizer.decode(buf[:j])
+                        decoded = j
+                    except Exception:
+                        pass
+
+                if res is not None:
+                    print(res, end="", flush=True)
+                    buf = buf[decoded:]
+
+            print()
+        return
 
     while True:
         prompt = input("\nPrompt: ").strip()

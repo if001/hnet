@@ -235,9 +235,11 @@ def save_training_config(training_config: TrainingConfig, output_path: Path) -> 
 
 def estimate_dataset_examples(
     training_config: TrainingConfig,
+    sources: list[DatasetSource] | None = None,
 ) -> tuple[int | None, int | None]:
+    use_sources = sources or training_config.datasets
     example_counts = []
-    for source in training_config.datasets:
+    for source in use_sources:
         if source.take_examples <= 0:
             return None, None
         example_counts.append(source.take_examples)
@@ -250,6 +252,51 @@ def estimate_dataset_examples(
         training_config.batch_size * training_config.grad_accum_steps
     )
     return total_examples, optimizer_steps
+
+
+def split_train_validation_sources(
+    sources: list[DatasetSource],
+    validation_split_ratio: float,
+) -> tuple[list[DatasetSource], list[DatasetSource]]:
+    if not 0.0 < validation_split_ratio < 1.0:
+        raise ValueError(
+            f"validation_split_ratio must be in (0, 1), got {validation_split_ratio}"
+        )
+
+    train_sources: list[DatasetSource] = []
+    validation_sources: list[DatasetSource] = []
+
+    for source in sources:
+        if source.take_examples <= 1:
+            raise ValueError(
+                "validation split requires finite take_examples >= 2 for each dataset source"
+            )
+
+        total = source.take_examples
+        val_take = max(1, int(round(total * validation_split_ratio)))
+        val_take = min(val_take, total - 1)
+        train_take = total - val_take
+
+        train_sources.append(
+            DatasetSource(
+                name=source.name,
+                split=source.split,
+                config_name=source.config_name,
+                take_examples=train_take,
+                skip_examples=source.skip_examples,
+            )
+        )
+        validation_sources.append(
+            DatasetSource(
+                name=source.name,
+                split=source.split,
+                config_name=source.config_name,
+                take_examples=val_take,
+                skip_examples=source.skip_examples + train_take,
+            )
+        )
+
+    return train_sources, validation_sources
 
 
 def save_checkpoint(
@@ -288,16 +335,10 @@ def evaluate_validation(
     training_config: TrainingConfig,
     device: torch.device,
     training_dtype: torch.dtype,
-    validation_sources: list[DatasetSource],
+    validation_dataloader: DataLoader[dict[str, torch.Tensor]],
 ) -> dict[str, Any] | None:
     if training_config.validation_max_batches <= 0:
         return None
-
-    dataloader = create_dataloader(
-        training_config,
-        sources=validation_sources,
-        shuffle=False,
-    )
 
     ce_sum = 0.0
     token_count = 0
@@ -309,10 +350,14 @@ def evaluate_validation(
     count_by_stage: list[int] = []
 
     processed_batches = 0
+    validation_iterator = iter(validation_dataloader)
 
-    for batch in dataloader:
-        if processed_batches >= training_config.validation_max_batches:
+    while processed_batches < training_config.validation_max_batches:
+        try:
+            batch = next(validation_iterator)
+        except StopIteration:
             break
+
         processed_batches += 1
 
         input_ids = batch["input_ids"].to(device, non_blocking=True)
@@ -346,8 +391,12 @@ def evaluate_validation(
                 ratio_gap_sum_by_stage.append(0.0)
                 count_by_stage.append(0)
 
-            selected_fraction = float(router_output.boundary_mask.float().mean().detach())
-            mean_prob = float(router_output.boundary_prob[..., -1].float().mean().detach())
+            selected_fraction = float(
+                router_output.boundary_mask.float().mean().detach()
+            )
+            mean_prob = float(
+                router_output.boundary_prob[..., -1].float().mean().detach()
+            )
             target_ratio = training_config.compression_ratios[
                 min(stage_idx, len(training_config.compression_ratios) - 1)
             ]
@@ -375,25 +424,57 @@ def evaluate_validation(
         mean_prob_by_stage.append(mean_prob_sum_by_stage[idx] / denom)
 
     if selected_fraction_by_stage:
-        actual_selected_fraction = sum(selected_fraction_by_stage) / len(selected_fraction_by_stage)
+        actual_selected_fraction = sum(selected_fraction_by_stage) / len(
+            selected_fraction_by_stage
+        )
         mean_boundary_probability = sum(mean_prob_by_stage) / len(mean_prob_by_stage)
-        target_ratio_gap = sum(target_ratio_gap_by_stage) / len(target_ratio_gap_by_stage)
+        target_ratio_gap = sum(target_ratio_gap_by_stage) / len(
+            target_ratio_gap_by_stage
+        )
     else:
         actual_selected_fraction = 0.0
         mean_boundary_probability = 0.0
         target_ratio_gap = 0.0
 
-    stage0_selected_fraction = selected_fraction_by_stage[0] if len(selected_fraction_by_stage) > 0 else float("nan")
-    stage1_selected_fraction = selected_fraction_by_stage[1] if len(selected_fraction_by_stage) > 1 else float("nan")
-    stage0_target_ratio_gap = target_ratio_gap_by_stage[0] if len(target_ratio_gap_by_stage) > 0 else float("nan")
-    stage1_target_ratio_gap = target_ratio_gap_by_stage[1] if len(target_ratio_gap_by_stage) > 1 else float("nan")
+    stage0_selected_fraction = (
+        selected_fraction_by_stage[0]
+        if len(selected_fraction_by_stage) > 0
+        else float("nan")
+    )
+    stage1_selected_fraction = (
+        selected_fraction_by_stage[1]
+        if len(selected_fraction_by_stage) > 1
+        else float("nan")
+    )
+    stage0_target_ratio_gap = (
+        target_ratio_gap_by_stage[0]
+        if len(target_ratio_gap_by_stage) > 0
+        else float("nan")
+    )
+    stage1_target_ratio_gap = (
+        target_ratio_gap_by_stage[1]
+        if len(target_ratio_gap_by_stage) > 1
+        else float("nan")
+    )
 
-    avg_bytes_per_chunk = 1.0 / max(stage0_selected_fraction, 1e-8) if not math.isnan(stage0_selected_fraction) else float("nan")
+    avg_bytes_per_chunk = (
+        1.0 / max(stage0_selected_fraction, 1e-8)
+        if not math.isnan(stage0_selected_fraction)
+        else float("nan")
+    )
     compression_l1_l0 = avg_bytes_per_chunk
-    compression_l2_l1 = 1.0 / max(stage1_selected_fraction, 1e-8) if not math.isnan(stage1_selected_fraction) else float("nan")
+    compression_l2_l1 = (
+        1.0 / max(stage1_selected_fraction, 1e-8)
+        if not math.isnan(stage1_selected_fraction)
+        else float("nan")
+    )
 
-    if not math.isnan(stage0_selected_fraction) and not math.isnan(stage1_selected_fraction):
-        compression_l2_l0 = 1.0 / max(stage0_selected_fraction * stage1_selected_fraction, 1e-8)
+    if not math.isnan(stage0_selected_fraction) and not math.isnan(
+        stage1_selected_fraction
+    ):
+        compression_l2_l0 = 1.0 / max(
+            stage0_selected_fraction * stage1_selected_fraction, 1e-8
+        )
     else:
         compression_l2_l0 = float("nan")
 
@@ -440,11 +521,30 @@ def train(training_config: TrainingConfig) -> None:
     metrics_logger = TrainingMetricsLogger(output_dir / "training_metrics.csv")
     logger.info("training_metrics_csv=%s", metrics_logger.output_path)
 
-    validation_metrics_logger = ValidationMetricsLogger(output_dir / "validation_metrics.csv")
+    validation_metrics_logger = ValidationMetricsLogger(
+        output_dir / "validation_metrics.csv"
+    )
     logger.info("validation_metrics_csv=%s", validation_metrics_logger.output_path)
 
+    train_sources = training_config.datasets
+    validation_sources: list[DatasetSource]
+
+    if training_config.validation_datasets is not None:
+        validation_sources = training_config.validation_datasets
+        logger.info("validation_source_mode=explicit")
+    else:
+        train_sources, validation_sources = split_train_validation_sources(
+            training_config.datasets,
+            training_config.validation_split_ratio,
+        )
+        logger.info(
+            "validation_source_mode=split_from_train ratio=%.4f (fixed holdout)",
+            training_config.validation_split_ratio,
+        )
+
     estimated_examples, estimated_optimizer_steps = estimate_dataset_examples(
-        training_config
+        training_config,
+        sources=train_sources,
     )
     if estimated_examples is None:
         logger.info("dataset_examples_estimate=unavailable")
@@ -483,14 +583,22 @@ def train(training_config: TrainingConfig) -> None:
         format_parameter_count(trainable_params),
     )
 
-    dataloader = create_dataloader(training_config, shuffle=True)
+    dataloader = create_dataloader(
+        training_config,
+        sources=train_sources,
+        shuffle=True,
+    )
     data_iterator = iter(dataloader)
 
     param_groups = group_params(model)
     apply_weight_decay(param_groups, training_config.weight_decay)
     optimizer = AdamW(param_groups, betas=(0.9, 0.95), eps=1e-8)
 
-    validation_sources = training_config.validation_datasets or training_config.datasets
+    validation_dataloader = create_dataloader(
+        training_config,
+        sources=validation_sources,
+        shuffle=False,
+    )
 
     model.train()
     scaler = torch.amp.GradScaler("cuda", enabled=use_grad_scaler)
@@ -498,7 +606,10 @@ def train(training_config: TrainingConfig) -> None:
     last_saved_step = 0
     completed_steps = 0
 
-    while training_config.max_steps is None or completed_steps < training_config.max_steps:
+    while (
+        training_config.max_steps is None
+        or completed_steps < training_config.max_steps
+    ):
         optimizer.zero_grad(set_to_none=True)
         ce_loss_value = 0.0
         ratio_loss_value = 0.0
@@ -593,8 +704,8 @@ def train(training_config: TrainingConfig) -> None:
 
         if completed_steps % training_config.log_every == 0 or completed_steps == 1:
             if training_config.max_steps is not None:
-                epoch_progress = 100.0 * completed_steps / float(
-                    max(1, training_config.max_steps)
+                epoch_progress = (
+                    100.0 * completed_steps / float(max(1, training_config.max_steps))
                 )
                 logger.info(
                     "step=%d/%d epoch_progress=%.2f%% lr=%.6g ce_loss=%.4f ratio_loss=%.4f total_loss=%.4f",
@@ -607,8 +718,8 @@ def train(training_config: TrainingConfig) -> None:
                     total_loss,
                 )
             elif estimated_optimizer_steps is not None:
-                epoch_progress = 100.0 * completed_steps / float(
-                    max(1, estimated_optimizer_steps)
+                epoch_progress = (
+                    100.0 * completed_steps / float(max(1, estimated_optimizer_steps))
                 )
                 logger.info(
                     "step=%d epoch_progress_est=%.2f%% lr=%.6g ce_loss=%.4f ratio_loss=%.4f total_loss=%.4f",
@@ -639,7 +750,7 @@ def train(training_config: TrainingConfig) -> None:
                 training_config=training_config,
                 device=device,
                 training_dtype=training_dtype,
-                validation_sources=validation_sources,
+                validation_dataloader=validation_dataloader,
             )
             model.train()
 

@@ -54,6 +54,7 @@ def parse_args() -> TrainingConfig:
     parser.add_argument("--save-every", type=int, default=100)
     parser.add_argument("--validation-every", type=int, default=100)
     parser.add_argument("--validation-max-batches", type=int, default=20)
+    parser.add_argument("--validation-split-ratio", type=float, default=0.1)
     parser.add_argument("--train-ratio-weight", type=float, default=0.02)
     parser.add_argument(
         "--compression-ratio",
@@ -111,6 +112,7 @@ def parse_args() -> TrainingConfig:
         save_every=args.save_every,
         validation_every=args.validation_every,
         validation_max_batches=args.validation_max_batches,
+        validation_split_ratio=args.validation_split_ratio,
         train_ratio_weight=args.train_ratio_weight,
         compression_ratios=compression_ratios,
         lr_multipliers=lr_multipliers,

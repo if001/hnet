@@ -34,6 +34,7 @@ class TrainingConfig:
     save_every: int = 100
     validation_every: int = 100
     validation_max_batches: int = 20
+    validation_split_ratio: float = 0.1
     train_ratio_weight: float = 0.02
     compression_ratios: list[float] = field(default_factory=lambda: [4.0])
     lr_multipliers: list[float] = field(default_factory=lambda: [1.0, 1.0])

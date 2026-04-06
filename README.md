@@ -36,6 +36,8 @@ einops optree regex omegaconf \
 --dataset if001/bunpo_phi4 \
 --max-steps 2000 \
 --save-every 1000 \
+--validation-every 100 \
+--validation-max-batches 20 \
 --output-dir artifacts/hnet_1stage_100m
 ```
 
@@ -43,6 +45,34 @@ einops optree regex omegaconf \
 - `artifacts/.../checkpoint_step_XXXXXX.pt`
 - `artifacts/.../model_config.json`
 - `artifacts/.../training_metrics.csv`
+
+### 2-stage
+chunkingとmainの層で異なるlrを使うために、lr-multiplierを設定する.
+2-stageではchukingを２つの層で行う。それぞれの目標圧縮率を指定するためcompression-ratioを設定する
+
+``` sh
+!python train.py \
+--model-config-path 'configs/hnet_2stage_200m.json' \
+--lr-multiplier 3.0 \
+--lr-multiplier 1.0 \
+--lr-multiplier 1.0 \
+--compression-ratio 3 \
+--compression-ratio 3 \
+--dataset-template 'SOURCES_JA8_EN1_CODE1_10' \
+--seq-len 1024 \
+--batch-size 64 \
+--grad-accum-steps 4 \
+--learning-rate 4.0e-4 \
+--save-every 4000 \
+--max-steps 16000 \
+--log-every 2000 \
+--validation-every 500 \
+--validation-max-batches 20 \
+--validation-split-ratio 0.05 \
+--shuffle-buffer-size=4096 \
+--output-dir "artifacts/hnet_2stage_200m_j8_e1_c1_10"
+```
+
 
 ## Metrics
 学習ログは `training_metrics.csv` に保存されます。あとから PNG に描画できます。
@@ -53,6 +83,34 @@ einops optree regex omegaconf \
 --output-path artifacts/hnet_1stage_100m/training_metrics.png
 ```
 
+``` sh
+!python plot_validation_log.py \
+--csv-path artifacts/hnet_1stage_100m/validation_metrics.csv \
+--output-path artifacts/hnet_1stage_100m/validation_metrics.png
+```
+
+### loss
+- ce_loss は訓練バッチ上の next-byte cross-entropy
+- ratio_loss は圧縮率が target ratio に近づくよう促す補助損失
+- total_loss はその合計
+
+### val
+- val_ce は検証データ上の next-byte cross-entropy
+- val_bpb はbits-per-byte で、byte-level モデルの主品質指標
+どちらも低いほど良いです。
+
+### 2-stage
+2-stage の chunking 指標では、
+- L1/L0 は入力→stage1 の圧縮率
+- L2/L1 はstage1→stage2 の圧縮率
+- L2/L0 は入力→stage2 までの総圧縮率
+
+- selected_fraction_s0 は stage1 で保持された割合
+- selected_fraction_s1 は stage2 で保持された割合
+小さいほど強圧縮を表す
+
+- target_gap_s0, target_gap_s1 は target ratio との差で、これまでの整理では正なら under-compress（保持しすぎ）、負なら over-compress（削りすぎ）と解釈
+
 ## Inference
 学習済み checkpoint と保存された `model_config.json` を指定します。
 
@@ -60,6 +118,24 @@ einops optree regex omegaconf \
 !python generate.py \
 --model-path artifacts/hnet_1stage_100m/checkpoint_step_000020.pt \
 --config-path artifacts/hnet_1stage_100m/model_config.json
+```
+
+## chunking
+
+``` sh
+python inspect_chunking.py \
+    --model-path outputs/checkpoint_step_200.pt \
+    --config-path outputs/model_config.json \
+    --prompt "今日の天気は" \
+    --prompt "機械学習の基本は"
+```
+
+## token count
+
+``` sh
+python count_dataset_tokens.py \
+--dataset-template SOURCES_JA8_EN1_CODE1 \
+--add-bos --add-eos
 ```
 
 ---

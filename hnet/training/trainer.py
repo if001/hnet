@@ -318,6 +318,25 @@ def save_checkpoint(
     return checkpoint_path
 
 
+def build_cached_validation_batches(
+    validation_dataloader: DataLoader[dict[str, torch.Tensor]],
+    max_batches: int,
+) -> list[dict[str, torch.Tensor]]:
+    if max_batches <= 0:
+        return []
+
+    cached_batches: list[dict[str, torch.Tensor]] = []
+    validation_iterator = iter(validation_dataloader)
+    for _ in range(max_batches):
+        try:
+            batch = next(validation_iterator)
+        except StopIteration:
+            break
+        cached_batches.append(batch)
+
+    return cached_batches
+
+
 def _format_boundary_positions(mask: torch.Tensor, limit: int = 64) -> str:
     indices = torch.nonzero(mask, as_tuple=False).squeeze(-1).tolist()
     if not indices:
@@ -335,9 +354,9 @@ def evaluate_validation(
     training_config: TrainingConfig,
     device: torch.device,
     training_dtype: torch.dtype,
-    validation_dataloader: DataLoader[dict[str, torch.Tensor]],
+    validation_batches: list[dict[str, torch.Tensor]],
 ) -> dict[str, Any] | None:
-    if training_config.validation_max_batches <= 0:
+    if training_config.validation_max_batches <= 0 or not validation_batches:
         return None
 
     ce_sum = 0.0
@@ -350,14 +369,8 @@ def evaluate_validation(
     count_by_stage: list[int] = []
 
     processed_batches = 0
-    validation_iterator = iter(validation_dataloader)
 
-    while processed_batches < training_config.validation_max_batches:
-        try:
-            batch = next(validation_iterator)
-        except StopIteration:
-            break
-
+    for batch in validation_batches:
         processed_batches += 1
 
         input_ids = batch["input_ids"].to(device, non_blocking=True)
@@ -599,6 +612,11 @@ def train(training_config: TrainingConfig) -> None:
         sources=validation_sources,
         shuffle=False,
     )
+    validation_batches = build_cached_validation_batches(
+        validation_dataloader,
+        training_config.validation_max_batches,
+    )
+    logger.info("cached_validation_batches=%d", len(validation_batches))
 
     model.train()
     scaler = torch.amp.GradScaler("cuda", enabled=use_grad_scaler)
@@ -750,7 +768,7 @@ def train(training_config: TrainingConfig) -> None:
                 training_config=training_config,
                 device=device,
                 training_dtype=training_dtype,
-                validation_dataloader=validation_dataloader,
+                validation_batches=validation_batches,
             )
             model.train()
 

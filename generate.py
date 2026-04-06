@@ -123,7 +123,9 @@ def generate(
         logits = output.logits[0, -1, :] / temperature
 
 
-def stream_generate_and_print(model, prompt: str, max_tokens: int, temperature: float, top_p: float) -> None:
+def stream_generate_and_print(
+    model, prompt: str, max_tokens: int, temperature: float, top_p: float
+) -> None:
     print(f"\033[92m{prompt}\033[0m", end="")
     decoder = codecs.getincrementaldecoder("utf-8")(errors="replace")
 

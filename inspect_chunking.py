@@ -82,6 +82,15 @@ def render_chunk_content(token_ids: list[int]) -> str:
     return rendered if rendered else "<empty>"
 
 
+def format_chunk_compact(token_ids: list[int]) -> str:
+    mixed = render_chunk_content(token_ids)
+    return f"[{mixed}]"
+
+
+def format_stage_compact(chunks: list[list[int]]) -> str:
+    return ", ".join(format_chunk_compact(chunk) for chunk in chunks)
+
+
 def make_byte_chunks(token_ids: list[int], boundary_mask: list[bool]) -> list[list[int]]:
     boundary_positions = [idx for idx, is_boundary in enumerate(boundary_mask) if is_boundary]
     if not boundary_positions:
@@ -158,6 +167,7 @@ def inspect_prompt(model: HNetForCausalLM, prompt: str, add_bos: bool) -> None:
             f"  - chunk{idx:03d} len={len(chunk)} bytes={chunk} "
             f"text_replace={text_replace!r} mixed={mixed!r}"
         )
+    print(f"stage0: {format_stage_compact(stage0_chunks)}")
 
     print("\n[Stage 1]")
     print(f"boundaries(stage0_chunk_index): {stage1_boundary_indices_in_stage0}")
@@ -171,6 +181,7 @@ def inspect_prompt(model: HNetForCausalLM, prompt: str, add_bos: bool) -> None:
             f"  - chunk{idx:03d} len={len(chunk)} bytes={chunk} "
             f"text_replace={text_replace!r} mixed={mixed!r}"
         )
+    print(f"stage1: {format_stage_compact(stage1_chunks)}")
 
 
 

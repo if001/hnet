@@ -51,6 +51,37 @@ def decode_bytes(token_ids: list[int]) -> str:
     return bytes(token_ids).decode("utf-8", errors="replace")
 
 
+def render_chunk_content(token_ids: list[int]) -> str:
+    """Render chunk as mixed UTF-8 text and raw bytes.
+
+    Decodable UTF-8 spans are shown as plain text, undecodable bytes are shown as <0xHH>.
+    """
+    raw = bytes(token_ids)
+    cursor = 0
+    parts: list[str] = []
+
+    while cursor < len(raw):
+        current = raw[cursor:]
+        try:
+            parts.append(current.decode("utf-8"))
+            break
+        except UnicodeDecodeError as exc:
+            if exc.start > 0:
+                valid_prefix = current[: exc.start].decode("utf-8")
+                parts.append(valid_prefix)
+
+            bad = current[exc.start : exc.end]
+            if bad:
+                parts.extend(f"<0x{value:02X}>" for value in bad)
+                cursor += exc.end
+            else:
+                parts.append(f"<0x{current[0]:02X}>")
+                cursor += 1
+
+    rendered = "".join(parts)
+    return rendered if rendered else "<empty>"
+
+
 def make_byte_chunks(token_ids: list[int], boundary_mask: list[bool]) -> list[list[int]]:
     boundary_positions = [idx for idx, is_boundary in enumerate(boundary_mask) if is_boundary]
     if not boundary_positions:
@@ -65,6 +96,7 @@ def make_byte_chunks(token_ids: list[int], boundary_mask: list[bool]) -> list[li
 
 def inspect_prompt(model: HNetForCausalLM, prompt: str, add_bos: bool) -> None:
     tokenizer = ByteTokenizer()
+    prompt_utf8_bytes = list(prompt.encode("utf-8"))
     encoded = tokenizer.encode([prompt], add_bos=add_bos)[0]["input_ids"]
     token_ids = [int(x) for x in encoded.tolist()]
 
@@ -111,6 +143,8 @@ def inspect_prompt(model: HNetForCausalLM, prompt: str, add_bos: bool) -> None:
             stage1_chunks.append(token_ids[start:end])
 
     print(f"Input prompt: {prompt}")
+    print(f"input_prompt_utf8_bytes: {prompt_utf8_bytes}")
+    print(f"model_input_token_ids: {token_ids}")
     print(f"add_bos: {add_bos}")
     print(f"input_token_count(bytes): {len(token_ids)}")
     print("\n[Stage 0]")
@@ -118,8 +152,12 @@ def inspect_prompt(model: HNetForCausalLM, prompt: str, add_bos: bool) -> None:
     print(f"num_chunks: {len(stage0_chunks)}")
 
     for idx, chunk in enumerate(stage0_chunks):
-        text = decode_bytes(chunk)
-        print(f"  - chunk{idx:03d} len={len(chunk)} text={text!r}")
+        text_replace = decode_bytes(chunk)
+        mixed = render_chunk_content(chunk)
+        print(
+            f"  - chunk{idx:03d} len={len(chunk)} bytes={chunk} "
+            f"text_replace={text_replace!r} mixed={mixed!r}"
+        )
 
     print("\n[Stage 1]")
     print(f"boundaries(stage0_chunk_index): {stage1_boundary_indices_in_stage0}")
@@ -127,8 +165,12 @@ def inspect_prompt(model: HNetForCausalLM, prompt: str, add_bos: bool) -> None:
     print(f"num_chunks: {len(stage1_chunks)}")
 
     for idx, chunk in enumerate(stage1_chunks):
-        text = decode_bytes(chunk)
-        print(f"  - chunk{idx:03d} len={len(chunk)} text={text!r}")
+        text_replace = decode_bytes(chunk)
+        mixed = render_chunk_content(chunk)
+        print(
+            f"  - chunk{idx:03d} len={len(chunk)} bytes={chunk} "
+            f"text_replace={text_replace!r} mixed={mixed!r}"
+        )
 
 
 

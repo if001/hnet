@@ -103,7 +103,13 @@ def make_byte_chunks(token_ids: list[int], boundary_mask: list[bool]) -> list[li
     return chunks
 
 
-def inspect_prompt(model: HNetForCausalLM, prompt: str, add_bos: bool) -> None:
+def inspect_prompt(
+    model: HNetForCausalLM,
+    prompt: str,
+    add_bos: bool,
+    detail: bool,
+    index_label: str,
+) -> None:
     tokenizer = ByteTokenizer()
     prompt_utf8_bytes = list(prompt.encode("utf-8"))
     encoded = tokenizer.encode([prompt], add_bos=add_bos)[0]["input_ids"]
@@ -151,12 +157,19 @@ def inspect_prompt(model: HNetForCausalLM, prompt: str, add_bos: bool) -> None:
             )
             stage1_chunks.append(token_ids[start:end])
 
+    print(index_label)
     print(f"Input prompt: {prompt}")
+    print(f"stage0: {format_stage_compact(stage0_chunks)}")
+    print(f"stage1: {format_stage_compact(stage1_chunks)}")
+
+    if not detail:
+        return
+
     print(f"input_prompt_utf8_bytes: {prompt_utf8_bytes}")
     print(f"model_input_token_ids: {token_ids}")
     print(f"add_bos: {add_bos}")
     print(f"input_token_count(bytes): {len(token_ids)}")
-    print("\n[Stage 0]")
+    print("\n[Stage 0 Details]")
     print(f"boundaries(input_byte_index): {stage0_boundaries}")
     print(f"num_chunks: {len(stage0_chunks)}")
 
@@ -167,9 +180,8 @@ def inspect_prompt(model: HNetForCausalLM, prompt: str, add_bos: bool) -> None:
             f"  - chunk{idx:03d} len={len(chunk)} bytes={chunk} "
             f"text_replace={text_replace!r} mixed={mixed!r}"
         )
-    print(f"stage0: {format_stage_compact(stage0_chunks)}")
 
-    print("\n[Stage 1]")
+    print("\n[Stage 1 Details]")
     print(f"boundaries(stage0_chunk_index): {stage1_boundary_indices_in_stage0}")
     print(f"boundaries(input_byte_index): {stage1_boundary_positions_in_input}")
     print(f"num_chunks: {len(stage1_chunks)}")
@@ -181,8 +193,6 @@ def inspect_prompt(model: HNetForCausalLM, prompt: str, add_bos: bool) -> None:
             f"  - chunk{idx:03d} len={len(chunk)} bytes={chunk} "
             f"text_replace={text_replace!r} mixed={mixed!r}"
         )
-    print(f"stage1: {format_stage_compact(stage1_chunks)}")
-
 
 
 def main() -> None:
@@ -212,6 +222,11 @@ def main() -> None:
         action="store_true",
         help="Disable BOS addition to the input prompt",
     )
+    parser.add_argument(
+        "--detail",
+        action="store_true",
+        help="Show detailed chunk diagnostics in addition to compact output",
+    )
     args = parser.parse_args()
 
     print("Loading model...")
@@ -227,15 +242,30 @@ def main() -> None:
     if args.prompts:
         valid_prompts = [prompt.strip() for prompt in args.prompts if prompt.strip()]
         for idx, prompt in enumerate(valid_prompts, start=1):
-            print(f"\n[{idx}/{len(valid_prompts)}]")
-            inspect_prompt(model, prompt, add_bos=add_bos)
+            if idx > 1:
+                print()
+            inspect_prompt(
+                model,
+                prompt,
+                add_bos=add_bos,
+                detail=args.detail,
+                index_label=f"[{idx}/{len(valid_prompts)}]",
+            )
         return
 
+    prompt_count = 0
     while True:
         prompt = input("\nPrompt: ").strip()
         if not prompt:
             continue
-        inspect_prompt(model, prompt, add_bos=add_bos)
+        prompt_count += 1
+        inspect_prompt(
+            model,
+            prompt,
+            add_bos=add_bos,
+            detail=args.detail,
+            index_label=f"[{prompt_count}/?]",
+        )
 
 
 if __name__ == "__main__":

@@ -1,5 +1,6 @@
 from hnet.training import DatasetSource
 
+## byte換算で0.5B token
 SOURCES_JA8_EN1_CODE1: list[DatasetSource] = [
     DatasetSource(
         name="hotchpotch/fineweb-2-edu-japanese",
@@ -93,7 +94,7 @@ SOURCES_JA45_EN45_CODE1: list[DatasetSource] = [
 
 ## 8:1:1
 ## chatGPTの概算では通常のtokenizerで1B Token程度
-## byte levelでは大きすぎるので一度保留
+## byte換算で4B
 SOURCES_JA8_EN1_CODE1_10: list[DatasetSource] = [
     DatasetSource(
         name="hotchpotch/fineweb-2-edu-japanese",
@@ -181,5 +182,46 @@ SOURCES_JA45_EN45_CODE1_10: list[DatasetSource] = [
         name="codeparrot/codeparrot-clean",
         split="train",
         take_examples=100_000,
+    ),
+]
+
+
+## 8:1:1
+## byte換算で8B
+SOURCES_JA8_EN1_CODE1_20: list[DatasetSource] = [
+    DatasetSource(
+        name="hotchpotch/fineweb-2-edu-japanese",
+        config_name="small_tokens_cleaned",
+        split="train",
+        take_examples=1260_000,
+        skip_examples=20_000,
+    ),
+    DatasetSource(
+        name="wikimedia/wikipedia",
+        config_name="20231101.ja",
+        split="train",
+        take_examples=240_000,
+    ),
+    DatasetSource(
+        name="HuggingFaceFW/fineweb-edu",
+        config_name="sample-10BT",
+        split="train",
+        take_examples=160_000,
+    ),
+    DatasetSource(
+        name="wikimedia/wikipedia",
+        config_name="20231101.en",
+        split="train",
+        take_examples=40_000,
+    ),
+    DatasetSource(
+        name="codeparrot/codeparrot-clean",
+        split="train",
+        take_examples=200_000,
+    ),
+    DatasetSource(
+        name="if001/aozorabunko-clean-sin",
+        split="train",
+        take_examples=10_000,
     ),
 ]

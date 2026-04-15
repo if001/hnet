@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 import re
-from typing import Iterable, Iterator, Mapping, Sequence
+from typing import Iterator, Mapping, Sequence
 
 import torch
 from torch.utils.data import DataLoader, IterableDataset
@@ -22,15 +22,16 @@ class SFTDataConfig:
     num_workers: int = 0
     seed: int = 42
 
-    # Qwen3 style control
+    # Qwen3-style system prompt
     system_prompt: str = "You are a helpful assistant."
 
-    # 1 epoch 分の概算 example 数
-    # 8:1:1 = 120k : 15k : 15k
-    tokyo_ja_take: int = 54_000
-    jamard_take: int = 46_000
-    oasst_take: int = 20_000
-    tokyo_en_take: int = 15_000
+    # example数ベースの概算比率
+    # JA : EN : CODE = 8 : 1 : 1
+    # JA = magpie + JaMARD
+    magpie_take: int = 60_000
+    jamard_take: int = 35_000
+    oasst2_take: int = 15_000
+    aya_en_take: int = 15_000
     coding_take: int = 15_000
 
 
@@ -73,23 +74,12 @@ def _normalize_messages(raw_messages: object) -> list[ChatMessage]:
     return messages
 
 
-def _first_user_text(messages: Sequence[ChatMessage]) -> str:
-    for message in messages:
-        if message["role"] == "user":
-            return message["content"]
-    return ""
-
-
-def _looks_japanese(text: str) -> bool:
-    return bool(re.search(r"[\u3040-\u30ff\u3400-\u4dbf\u4e00-\u9fff]", text))
-
-
 def _is_valid_dialogue(messages: Sequence[ChatMessage]) -> bool:
     if len(messages) < 2:
         return False
     if messages[-1]["role"] != "assistant":
         return False
-    return any(m["role"] == "user" for m in messages)
+    return any(message["role"] == "user" for message in messages)
 
 
 def _prepend_qwen3_system(
@@ -99,18 +89,13 @@ def _prepend_qwen3_system(
 ) -> list[ChatMessage]:
     control = "/think" if think_mode else "/no_think"
 
-    out: list[ChatMessage] = []
     if messages and messages[0]["role"] == "system":
         merged_system = messages[0]["content"].strip()
         merged_system = f"{merged_system}\n{control}" if merged_system else control
-        out.append({"role": "system", "content": merged_system})
-        out.extend(messages[1:])
-        return out
+        return [{"role": "system", "content": merged_system}, *messages[1:]]
 
     system_content = f"{system_prompt}\n{control}".strip() if system_prompt else control
-    out.append({"role": "system", "content": system_content})
-    out.extend(messages)
-    return out
+    return [{"role": "system", "content": system_content}, *messages]
 
 
 _ANSWER_PATTERNS: tuple[re.Pattern[str], ...] = (
@@ -144,36 +129,30 @@ def _format_reasoning_assistant(text: str) -> str:
     return f"<think>\n{thought}\n</think>\n\n{answer}"
 
 
-def _extract_tokyotech_messages(example: Mapping[str, object]) -> list[ChatMessage]:
-    # 公開 viewer から完全な列名が読み切れないため、
-    # よくある候補を順に試す
-    candidates = (
-        "messages",
-        "conversation",
-        "conversations",
-        "synthesized_multiturn_conversation",
-        "multiturn_conversation",
-        "chosen",
-    )
-    for field in candidates:
-        if field in example:
-            return _normalize_messages(example[field])
-
-    raise KeyError(
-        f"Could not find a supported conversation field in tokyotech example. "
-        f"Available keys: {sorted(example.keys())}"
-    )
-
-
-def _map_tokyotech(
-    example: Mapping[str, object], system_prompt: str
-) -> dict[str, object]:
-    messages = _extract_tokyotech_messages(example)
+def _map_magpie(example: Mapping[str, object], system_prompt: str) -> dict[str, object]:
+    messages = _normalize_messages(example["conversations"])
     messages = _prepend_qwen3_system(
         messages, think_mode=False, system_prompt=system_prompt
     )
-    bucket = "ja" if _looks_japanese(_first_user_text(messages)) else "en"
-    return {"messages": messages, "bucket": bucket}
+    return {"messages": messages}
+
+
+def _map_oasst2(example: Mapping[str, object], system_prompt: str) -> dict[str, object]:
+    if "conversations" in example:
+        messages = _normalize_messages(example["conversations"])
+    elif "messages" in example:
+        messages = _normalize_messages(example["messages"])
+    else:
+        raise KeyError(
+            f"Unsupported oasst2 schema. Available keys: {sorted(example.keys())}"
+        )
+
+    messages = _prepend_qwen3_system(
+        messages,
+        think_mode=False,
+        system_prompt=system_prompt,
+    )
+    return {"messages": messages}
 
 
 def _map_jamard(example: Mapping[str, object], system_prompt: str) -> dict[str, object]:
@@ -192,15 +171,23 @@ def _map_jamard(example: Mapping[str, object], system_prompt: str) -> dict[str, 
             out.append(message)
 
     out = _prepend_qwen3_system(out, think_mode=True, system_prompt=system_prompt)
-    return {"messages": out, "bucket": "ja"}
+    return {"messages": out}
 
 
-def _map_oasst(example: Mapping[str, object], system_prompt: str) -> dict[str, object]:
-    messages = _normalize_messages(example["conversations"])
+def _map_aya_english(
+    example: Mapping[str, object], system_prompt: str
+) -> dict[str, object]:
+    user_text = str(example["inputs"]).strip()
+    assistant_text = str(example["targets"]).strip()
+
+    messages = [
+        {"role": "user", "content": user_text},
+        {"role": "assistant", "content": assistant_text},
+    ]
     messages = _prepend_qwen3_system(
         messages, think_mode=False, system_prompt=system_prompt
     )
-    return {"messages": messages, "bucket": "ja"}
+    return {"messages": messages}
 
 
 def _map_coding(example: Mapping[str, object], system_prompt: str) -> dict[str, object]:
@@ -208,7 +195,7 @@ def _map_coding(example: Mapping[str, object], system_prompt: str) -> dict[str, 
     messages = _prepend_qwen3_system(
         messages, think_mode=False, system_prompt=system_prompt
     )
-    return {"messages": messages, "bucket": "code"}
+    return {"messages": messages}
 
 
 def _valid_example(example: Mapping[str, object]) -> bool:
@@ -233,44 +220,49 @@ def _load_stream(
 
 
 def build_sft_train_dataset(cfg: SFTDataConfig) -> HFIterableDataset:
-    # tokyotech-llm/lmsys-chat-1m-synth
-    tokyo = _load_stream("tokyotech-llm/lmsys-chat-1m-synth")
-    tokyo = tokyo.shuffle(buffer_size=cfg.shuffle_buffer_size, seed=cfg.seed)
-    tokyo = tokyo.map(lambda ex: _map_tokyotech(ex, cfg.system_prompt))
-    tokyo = tokyo.filter(_valid_example)
+    # 1) Japanese chat
+    magpie = _load_stream("llm-jp/magpie-sft-v1.0")
+    magpie = magpie.shuffle(buffer_size=cfg.shuffle_buffer_size, seed=cfg.seed)
+    magpie = magpie.map(lambda ex: _map_magpie(ex, cfg.system_prompt))
+    magpie = magpie.filter(_valid_example).take(cfg.magpie_take)
 
-    tokyo_ja = tokyo.filter(lambda ex: ex["bucket"] == "ja").take(cfg.tokyo_ja_take)
-    tokyo_en = tokyo.filter(lambda ex: ex["bucket"] == "en").take(cfg.tokyo_en_take)
-
-    # elyza/JaMARD
-    jamard = _load_stream("elyza/JaMARD", trust_remote_code=True)
+    # 2) Japanese reasoning
+    jamard = _load_stream("if001/elyza_JaMARD_fork", trust_remote_code=True)
     jamard = jamard.shuffle(buffer_size=cfg.shuffle_buffer_size, seed=cfg.seed)
     jamard = jamard.map(lambda ex: _map_jamard(ex, cfg.system_prompt))
     jamard = jamard.filter(_valid_example).take(cfg.jamard_take)
 
-    # llm-jp/oasst1-21k-ja
-    oasst = _load_stream("llm-jp/oasst1-21k-ja")
-    oasst = oasst.shuffle(buffer_size=cfg.shuffle_buffer_size, seed=cfg.seed)
-    oasst = oasst.map(lambda ex: _map_oasst(ex, cfg.system_prompt))
-    oasst = oasst.filter(_valid_example).take(cfg.oasst_take)
+    # 3) Japanese chat supplement: oasst2-33k-ja
+    oasst2 = _load_stream("llm-jp/oasst2-33k-ja")
+    oasst2 = oasst2.shuffle(buffer_size=cfg.shuffle_buffer_size, seed=cfg.seed)
+    oasst2 = oasst2.map(lambda ex: _map_oasst2(ex, cfg.system_prompt))
+    oasst2 = oasst2.filter(_valid_example).take(cfg.oasst2_take)
 
-    # llm-jp/Synthetic-JP-EN-Coding-Dataset
+    # 3) English chat from Aya
+    aya = _load_stream("CohereLabs/aya_dataset")
+    aya = aya.filter(lambda ex: str(ex["language_code"]).lower() in {"eng", "en"})
+    aya = aya.shuffle(buffer_size=cfg.shuffle_buffer_size, seed=cfg.seed)
+    aya = aya.map(lambda ex: _map_aya_english(ex, cfg.system_prompt))
+    aya = aya.filter(_valid_example).take(cfg.aya_en_take)
+
+    # 4) Code
     coding = _load_stream("llm-jp/Synthetic-JP-EN-Coding-Dataset")
     coding = coding.shuffle(buffer_size=cfg.shuffle_buffer_size, seed=cfg.seed)
     coding = coding.map(lambda ex: _map_coding(ex, cfg.system_prompt))
     coding = coding.filter(_valid_example).take(cfg.coding_take)
 
-    # 日本語バケット内の比率
+    # Japanese pool = 8/10
+    # 60k : 35k : 15k
     ja_pool = interleave_datasets(
-        [tokyo_ja, jamard, oasst],
-        probabilities=[0.45, 0.38, 0.17],
+        [magpie, jamard, oasst2],
+        probabilities=[0.5455, 0.3182, 0.1363],
         seed=cfg.seed,
         stopping_strategy="first_exhausted",
     )
 
-    # 最終 8:1:1
+    # Final mix = 8 : 1 : 1
     mixed = interleave_datasets(
-        [ja_pool, tokyo_en, coding],
+        [ja_pool, aya, coding],
         probabilities=[0.8, 0.1, 0.1],
         seed=cfg.seed,
         stopping_strategy="first_exhausted",
@@ -294,9 +286,11 @@ def build_collate_fn(
 ):
     def collate_fn(batch: list[Mapping[str, object]]) -> dict[str, torch.Tensor]:
         chats = [example["messages"] for example in batch]
+
+        # tokenizer.chat_template は事前に Qwen3 互換のものを設定しておく
         texts = [
             tokenizer.apply_chat_template(
-                chat,  # type: ignore[arg-type]
+                chat,
                 tokenize=False,
                 add_generation_prompt=False,
             )
@@ -333,19 +327,3 @@ def build_sft_train_dataloader(
         num_workers=cfg.num_workers,
         collate_fn=build_collate_fn(tokenizer, cfg.max_length),
     )
-
-
-# -------------------------
-# usage
-# -------------------------
-# from transformers import AutoTokenizer
-#
-# tokenizer = AutoTokenizer.from_pretrained("Qwen/Qwen3-0.6B")
-# cfg = SFTDataConfig(
-#     batch_size=2,
-#     max_length=2048,
-#     system_prompt="You are a helpful assistant.",
-# )
-# train_dataloader = build_sft_train_dataloader(tokenizer, cfg)
-# batch = next(iter(train_dataloader))
-# print(batch["input_ids"].shape)

@@ -1,11 +1,19 @@
 import argparse
 import codecs
 import json
+import sys
 import time
 import uuid
 from http import HTTPStatus
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+from pathlib import Path
 from typing import Any
+
+# Ensure project root is importable when run as:
+#   python scripts/hnet_openai_server.py
+PROJECT_ROOT = Path(__file__).resolve().parent.parent
+if str(PROJECT_ROOT) not in sys.path:
+    sys.path.insert(0, str(PROJECT_ROOT))
 
 from generate import generate as hnet_generate
 from generate import load_from_pretrained

@@ -42,13 +42,45 @@ class SFTDataConfig:
 
 
 def _map_toolace(
-    example: Mapping[str, object | str], default_system_prompt: str
+    example: Mapping[str, object], default_system_prompt: str
 ) -> dict[str, object]:
-    messages = _normalize_messages(example["conversations"])
-    _system_prompt = str(example.get("system", default_system_prompt))
-    messages = _prepend_qwen3_system(
-        messages, think_mode=False, system_prompt=_system_prompt
-    )
+    raw_system = str(example.get("system", "")).strip()
+    raw_conversations = example["conversations"]
+
+    if not _is_mapping_list(raw_conversations):
+        raise ValueError("ToolACE conversations must be a list of mappings")
+
+    system_parts: list[str] = []
+    if default_system_prompt.strip():
+        system_parts.append(default_system_prompt.strip())
+    if raw_system:
+        system_parts.append(raw_system)
+    system_parts.append("/no_think")
+
+    messages: list[dict[str, str]] = [
+        {"role": "system", "content": "\n".join(system_parts).strip()}
+    ]
+
+    for item in raw_conversations:
+        raw_from = str(item["from"]).strip().lower()
+        value = str(item["value"]).strip()
+        if not value:
+            continue
+
+        if raw_from == "user":
+            messages.append({"role": "user", "content": value})
+        elif raw_from == "assistant":
+            messages.append({"role": "assistant", "content": value})
+        elif raw_from == "tool":
+            messages.append(
+                {
+                    "role": "user",
+                    "content": f"<tool_response>\n{value}\n</tool_response>",
+                }
+            )
+        else:
+            raise ValueError(f"Unsupported ToolACE role: {raw_from}")
+
     return {"messages": messages}
 
 
@@ -175,31 +207,73 @@ def _map_xlam(example: Mapping[str, object], system_prompt: str) -> dict[str, ob
     return {"messages": messages}
 
 
+def _tool_call_text(function_call: object) -> str:
+    payload = json.dumps(function_call, ensure_ascii=False)
+    return f"<tool_call>\n{payload}\n</tool_call>"
+
+
+def _tool_response_text(observation: object) -> str:
+    payload = json.dumps(observation, ensure_ascii=False)
+    return f"<tool_response>\n{payload}\n</tool_response>"
+
+
 def _map_apigen_mt(
     example: Mapping[str, object], default_system_prompt: str
 ) -> dict[str, object]:
-    conversations = _normalize_messages(example["conversations"])
+    raw_system = str(example.get("system", "")).strip()
+    raw_tools = example.get("tools", [])
+    raw_conversations = example["conversations"]
 
-    extra_system = str(example.get("system", "")).strip()
-    tools = example.get("tools", [])
+    if not _is_mapping_list(raw_conversations):
+        raise ValueError("APIGen-MT conversations must be a list of mappings")
 
     system_parts: list[str] = []
     if default_system_prompt.strip():
         system_parts.append(default_system_prompt.strip())
-
-    if extra_system:
-        system_parts.append(extra_system)
-
-    # tool use はまず /no_think で統一
+    if raw_system:
+        system_parts.append(raw_system)
     system_parts.append("/no_think")
 
-    if tools:
-        tools_json = json.dumps(tools, ensure_ascii=False)
+    if raw_tools:
+        tools_json = json.dumps(raw_tools, ensure_ascii=False)
         system_parts.append(f"<tools>\n{tools_json}\n</tools>")
 
-    system_content = "\n".join(system_parts).strip()
+    messages: list[dict[str, str]] = [
+        {"role": "system", "content": "\n".join(system_parts).strip()}
+    ]
 
-    messages = [{"role": "system", "content": system_content}, *conversations]
+    for item in raw_conversations:
+        raw_from = str(item.get("from", "")).strip().lower()
+        value = str(item.get("value", "")).strip()
+        function_call = item.get("function_call")
+        observation = item.get("observation")
+
+        if raw_from == "human":
+            if value:
+                messages.append({"role": "user", "content": value})
+
+        elif raw_from == "gpt":
+            assistant_parts: list[str] = []
+            if value:
+                assistant_parts.append(value)
+            if function_call is not None:
+                assistant_parts.append(_tool_call_text(function_call))
+
+            assistant_text = "\n".join(part for part in assistant_parts if part).strip()
+            if assistant_text:
+                messages.append({"role": "assistant", "content": assistant_text})
+
+        else:
+            raise ValueError(f"Unsupported APIGen-MT role: {raw_from}")
+
+        if observation is not None:
+            messages.append(
+                {
+                    "role": "user",
+                    "content": _tool_response_text(observation),
+                }
+            )
+
     return {"messages": messages}
 
 
@@ -291,7 +365,7 @@ def build_sft_train_dataset(cfg: SFTDataConfig) -> HFIterableDataset:
     magpie = magpie.filter(_valid_example).take(cfg.magpie_take)
 
     # 2) Japanese reasoning
-    jamard = _load_stream("if001/elyza_JaMARD_fork", trust_remote_code=True)
+    jamard = _load_stream("if001/elyza_JaMARD_fork")
     jamard = jamard.shuffle(buffer_size=cfg.shuffle_buffer_size, seed=cfg.seed)
     jamard = jamard.map(lambda ex: _map_jamard(ex, cfg.system_prompt))
     jamard = jamard.filter(_valid_example).take(cfg.jamard_take)

@@ -138,6 +138,59 @@ python count_dataset_tokens.py \
 --add-bos --add-eos
 ```
 
+## resume
+
+``` sh
+python train.py \
+    --model-config-path artifacts/base/model_config.json \
+    --resume-from-checkpoint artifacts/base/checkpoint_step_008000.pt \
+    --max-steps 12000 \
+    --rope-type yarn \
+    --rope-factor 4.0 \
+    --rope-original-max-position-embeddings 32768
+```
+
+## sft
+packingされるので事前にstepsをカウント
+``` sh
+python estimate_sft_epoch_steps.py \
+    --context-len 512 \
+    --batch-size 2 \
+    --grad-accum-steps 8
+```
+
+``` sh
+python -m hnet.sft.train \
+    --model-config-path artifacts/hnet_2stage_200m/model_config.json \
+    --pretrained-model-path artifacts/hnet_2stage_200m/checkpoint_step_8000.pt \
+    --output-dir artifacts/hnet_2stage_200m_sft \
+    --seq-len 512 \
+    --batch-size 2 \
+    --grad-accum-steps 8 \
+    --max-steps 1000
+```
+
+``` sh
+python generate_sft.py \
+    --model-path /path/to/sft_final_model.pt \
+    --config-path /path/to/model_config.json
+```
+
+## eval
+
+``` sh
+python scripts/hnet_openai_server.py \
+    --model-path /path/to/checkpoint_step_xxxxxx.pt \
+    --config-path /path/to/model_config.json \
+    --model-name hnet-local \
+    --host 0.0.0.0 \
+    --port 8000 \
+    --max-tokens 256 \
+    --temperature 0.0 \
+    --top-p 1.0
+```
+
+
 ---
 
 # H-Net Original

@@ -32,6 +32,13 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--temperature", type=float, default=1.0)
     parser.add_argument("--top-p", type=float, default=1.0)
     parser.add_argument(
+        "--dtype",
+        type=str,
+        default="auto",
+        choices=["auto", "bf16", "fp16", "fp32"],
+        help="Inference dtype for model load (default: auto).",
+    )
+    parser.add_argument(
         "--system-prompt",
         type=str,
         default="You are a helpful assistant.",
@@ -113,7 +120,11 @@ def main() -> None:
 
     print("Loading model...")
     try:
-        model = load_from_pretrained(str(model_path), str(config_path))
+        model = load_from_pretrained(
+            str(model_path),
+            str(config_path),
+            requested_dtype=args.dtype,
+        )
         print("Model loaded successfully.")
     except Exception as exc:
         print(f"Error loading model: {exc}")

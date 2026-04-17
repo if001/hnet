@@ -2,6 +2,7 @@ import argparse
 import codecs
 import sys
 from collections.abc import Mapping
+from typing import Literal
 
 import torch
 from omegaconf import ListConfig
@@ -10,7 +11,25 @@ from hnet.models import HNetForCausalLM, load_hnet_config
 from hnet.utils.tokenizers import ByteTokenizer
 
 
-def get_inference_dtype(device: str) -> torch.dtype:
+InferenceDType = Literal["auto", "bf16", "fp16", "fp32"]
+
+
+def get_inference_dtype(
+    device: str, requested_dtype: InferenceDType = "auto"
+) -> torch.dtype:
+    if requested_dtype == "bf16":
+        if device != "cuda":
+            raise ValueError("bf16 is only supported on CUDA device")
+        if not torch.cuda.is_bf16_supported():
+            raise ValueError("bf16 is not supported on this CUDA device")
+        return torch.bfloat16
+    if requested_dtype == "fp16":
+        if device != "cuda":
+            raise ValueError("fp16 is only supported on CUDA device")
+        return torch.float16
+    if requested_dtype == "fp32":
+        return torch.float32
+
     if device == "cuda":
         if torch.cuda.is_bf16_supported():
             return torch.bfloat16
@@ -28,7 +47,11 @@ def extract_model_state_dict(checkpoint: object) -> Mapping[str, torch.Tensor]:
     raise TypeError("Unsupported checkpoint format")
 
 
-def load_from_pretrained(model_path: str, model_config_path: str):
+def load_from_pretrained(
+    model_path: str,
+    model_config_path: str,
+    requested_dtype: InferenceDType = "auto",
+):
     """Load model from pretrained checkpoint.
 
     Args:
@@ -41,7 +64,7 @@ def load_from_pretrained(model_path: str, model_config_path: str):
     hnet_cfg = load_hnet_config(model_config_path)
 
     device = "cuda" if torch.cuda.is_available() else "cpu"
-    inference_dtype = get_inference_dtype(device)
+    inference_dtype = get_inference_dtype(device, requested_dtype=requested_dtype)
     model = HNetForCausalLM(hnet_cfg, device=device, dtype=inference_dtype)
     model.eval()
 
@@ -92,24 +115,31 @@ def generate(
         mask = torch.ones(input_ids.shape, device=device, dtype=torch.bool)
         output = model.forward(input_ids, mask=mask, inference_params=inference_cache)
 
-    logits = output.logits[0, -1, :] / temperature
+    is_greedy = temperature <= 0.0
+    logits = output.logits[0, -1, :]
+    if not is_greedy:
+        logits = logits / temperature
 
     for _ in range(max_tokens):
-        if top_p < 1.0:
-            sorted_logits, sorted_indices = torch.sort(logits, descending=True)
-            cumulative_probs = torch.cumsum(
-                torch.softmax(sorted_logits, dim=-1), dim=-1
-            )
+        if is_greedy:
+            next_token = torch.argmax(logits, dim=-1, keepdim=True)
+        else:
+            sampled_logits = logits.clone()
+            if top_p < 1.0:
+                sorted_logits, sorted_indices = torch.sort(sampled_logits, descending=True)
+                cumulative_probs = torch.cumsum(
+                    torch.softmax(sorted_logits, dim=-1), dim=-1
+                )
 
-            sorted_indices_to_remove = cumulative_probs > top_p
-            sorted_indices_to_remove[1:] = sorted_indices_to_remove[:-1].clone()
-            sorted_indices_to_remove[0] = 0
+                sorted_indices_to_remove = cumulative_probs > top_p
+                sorted_indices_to_remove[1:] = sorted_indices_to_remove[:-1].clone()
+                sorted_indices_to_remove[0] = 0
 
-            indices_to_remove = sorted_indices[sorted_indices_to_remove]
-            logits[indices_to_remove] = -float("inf")
+                indices_to_remove = sorted_indices[sorted_indices_to_remove]
+                sampled_logits[indices_to_remove] = -float("inf")
 
-        probs = torch.softmax(logits, dim=-1)
-        next_token = torch.multinomial(probs, 1)
+            probs = torch.softmax(sampled_logits, dim=-1)
+            next_token = torch.multinomial(probs, 1)
 
         if next_token.item() == tokenizer.eos_idx:
             break
@@ -120,7 +150,9 @@ def generate(
         with torch.inference_mode():
             output = model.step(current_token, inference_cache)
 
-        logits = output.logits[0, -1, :] / temperature
+        logits = output.logits[0, -1, :]
+        if not is_greedy:
+            logits = logits / temperature
 
 
 def stream_generate_and_print(
@@ -183,11 +215,20 @@ def main():
         dest="prompts",
         help="Prompt text. Repeat this option to generate from multiple prompts.",
     )
+    parser.add_argument(
+        "--dtype",
+        type=str,
+        default="auto",
+        choices=["auto", "bf16", "fp16", "fp32"],
+        help="Inference dtype (default: auto)",
+    )
     args = parser.parse_args()
 
     print("Loading model...")
     try:
-        model = load_from_pretrained(args.model_path, args.config_path)
+        model = load_from_pretrained(
+            args.model_path, args.config_path, requested_dtype=args.dtype
+        )
         print("Model loaded successfully.")
     except Exception as e:
         print(f"Error loading model: {e}")

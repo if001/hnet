@@ -20,6 +20,25 @@ from generate import load_from_pretrained
 from hnet.training.data import DefaultRecordFormatter
 
 
+def run_warmup(
+    model,
+    prompt: str,
+    max_tokens: int,
+    temperature: float,
+    top_p: float,
+) -> int:
+    generated_tokens = 0
+    for _token_id in hnet_generate(
+        model,
+        prompt,
+        max_tokens=max_tokens,
+        temperature=temperature,
+        top_p=top_p,
+    ):
+        generated_tokens += 1
+    return generated_tokens
+
+
 class HNetOpenAIHandler(BaseHTTPRequestHandler):
     server_version = "HNetOpenAIServer/0.1"
 
@@ -237,6 +256,23 @@ def parse_args() -> argparse.Namespace:
         action="store_true",
         help="Disable chat-style formatting and use raw prompt text.",
     )
+    parser.add_argument(
+        "--skip-warmup",
+        action="store_true",
+        help="Disable one-time warmup generation at server startup.",
+    )
+    parser.add_argument(
+        "--warmup-prompt",
+        type=str,
+        default="warmup",
+        help="Prompt text used for one-time warmup generation.",
+    )
+    parser.add_argument(
+        "--warmup-max-tokens",
+        type=int,
+        default=1,
+        help="Number of tokens to generate during startup warmup.",
+    )
     return parser.parse_args()
 
 
@@ -246,6 +282,17 @@ def main() -> None:
     print("loading_model=true")
     model = load_from_pretrained(args.model_path, args.config_path)
     print("loading_model=false")
+
+    if not args.skip_warmup:
+        print("warmup_started=true")
+        generated_tokens = run_warmup(
+            model=model,
+            prompt=args.warmup_prompt,
+            max_tokens=args.warmup_max_tokens,
+            temperature=max(args.temperature, 1e-5),
+            top_p=args.top_p,
+        )
+        print(f"warmup_finished=true generated_tokens={generated_tokens}")
 
     server = ThreadingHTTPServer((args.host, args.port), HNetOpenAIHandler)
     server.model = model

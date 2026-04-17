@@ -241,6 +241,13 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--temperature", type=float, default=0.0)
     parser.add_argument("--top-p", type=float, default=1.0)
     parser.add_argument(
+        "--dtype",
+        type=str,
+        default="auto",
+        choices=["auto", "bf16", "fp16", "fp32"],
+        help="Inference dtype for model load (default: auto).",
+    )
+    parser.add_argument(
         "--system-prompt",
         type=str,
         default="You are a helpful assistant.",
@@ -280,7 +287,11 @@ def main() -> None:
     args = parse_args()
 
     print("loading_model=true")
-    model = load_from_pretrained(args.model_path, args.config_path)
+    model = load_from_pretrained(
+        args.model_path,
+        args.config_path,
+        requested_dtype=args.dtype,
+    )
     print("loading_model=false")
 
     if not args.skip_warmup:
@@ -289,7 +300,7 @@ def main() -> None:
             model=model,
             prompt=args.warmup_prompt,
             max_tokens=args.warmup_max_tokens,
-            temperature=max(args.temperature, 1e-5),
+            temperature=args.temperature,
             top_p=args.top_p,
         )
         print(f"warmup_finished=true generated_tokens={generated_tokens}")

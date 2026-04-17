@@ -200,14 +200,14 @@ class HNetSFTTrainer(Trainer):
         )
         total_loss = ce_loss + self.ratio_weight * ratio_loss
 
-        if self.model.training:
-            self.log(
-                {
-                    "ce_loss": float(ce_loss.detach().cpu()),
-                    "ratio_loss": float(ratio_loss.detach().cpu()),
-                    "total_loss": float(total_loss.detach().cpu()),
-                }
-            )
+        # if self.model.training:
+        #     self.log(
+        #         {
+        #             "ce_loss": float(ce_loss.detach().cpu()),
+        #             "ratio_loss": float(ratio_loss.detach().cpu()),
+        #             "total_loss": float(total_loss.detach().cpu()),
+        #         }
+        #     )
 
         if return_outputs:
             return total_loss, outputs
@@ -253,7 +253,8 @@ def build_training_arguments(config: SFTTrainConfig) -> TrainingArguments:
         dataloader_num_workers=config.num_workers,
         dataloader_pin_memory=torch.cuda.is_available(),
         remove_unused_columns=False,
-        report_to=[],
+        # report_to=[],
+        report_to="wandb",
         seed=config.seed,
         bf16=torch.cuda.is_available() and torch.cuda.is_bf16_supported(),
         fp16=False,

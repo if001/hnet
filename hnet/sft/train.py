@@ -43,7 +43,9 @@ def load_pretrained_state(model_path: str) -> Mapping[str, torch.Tensor]:
 
 
 def parse_args() -> SFTTrainConfig:
-    parser = argparse.ArgumentParser(description="SFT training for H-Net with Hugging Face Trainer")
+    parser = argparse.ArgumentParser(
+        description="SFT training for H-Net with Hugging Face Trainer"
+    )
     parser.add_argument("--model-config-path", type=str, required=True)
     parser.add_argument("--pretrained-model-path", type=str, required=True)
     parser.add_argument("--output-dir", type=str, default="artifacts/hnet_sft")

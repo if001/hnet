@@ -3,6 +3,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 import re
 from typing import Iterator, Mapping, Sequence
+import json
 
 import torch
 from torch.utils.data import DataLoader, IterableDataset
@@ -33,6 +34,22 @@ class SFTDataConfig:
     oasst2_take: int = 15_000
     aya_en_take: int = 15_000
     coding_take: int = 15_000
+
+    # tool mixture = totalの約5%を想定
+    xlam_take: int = 6_000
+    toolace_take: int = 2_500
+    apigen_mt_take: int = 1_500
+
+
+def _map_toolace(
+    example: Mapping[str, object | str], default_system_prompt: str
+) -> dict[str, object]:
+    messages = _normalize_messages(example["conversations"])
+    _system_prompt = str(example.get("system", default_system_prompt))
+    messages = _prepend_qwen3_system(
+        messages, think_mode=False, system_prompt=_system_prompt
+    )
+    return {"messages": messages}
 
 
 def _is_mapping_list(value: object) -> bool:
@@ -137,11 +154,58 @@ def _map_magpie(example: Mapping[str, object], system_prompt: str) -> dict[str, 
     return {"messages": messages}
 
 
+def _map_xlam(example: Mapping[str, object], system_prompt: str) -> dict[str, object]:
+    tools = example.get("tools", example.get("functions", []))
+    query = str(example.get("query", example.get("question", ""))).strip()
+    answer = example.get("answers", example.get("answer", example.get("response", "")))
+
+    system = system_prompt.strip()
+    if tools:
+        tools_json = json.dumps(tools, ensure_ascii=False)
+        system = f"{system}\n/no_think\n<tools>\n{tools_json}\n</tools>"
+    else:
+        system = f"{system}\n/no_think"
+
+    assistant_text = str(answer).strip()
+    messages = [
+        {"role": "system", "content": system},
+        {"role": "user", "content": query},
+        {"role": "assistant", "content": assistant_text},
+    ]
+    return {"messages": messages}
+
+
+def _map_apigen_mt(
+    example: Mapping[str, object], default_system_prompt: str
+) -> dict[str, object]:
+    conversations = _normalize_messages(example["conversations"])
+
+    extra_system = str(example.get("system", "")).strip()
+    tools = example.get("tools", [])
+
+    system_parts: list[str] = []
+    if default_system_prompt.strip():
+        system_parts.append(default_system_prompt.strip())
+
+    if extra_system:
+        system_parts.append(extra_system)
+
+    # tool use はまず /no_think で統一
+    system_parts.append("/no_think")
+
+    if tools:
+        tools_json = json.dumps(tools, ensure_ascii=False)
+        system_parts.append(f"<tools>\n{tools_json}\n</tools>")
+
+    system_content = "\n".join(system_parts).strip()
+
+    messages = [{"role": "system", "content": system_content}, *conversations]
+    return {"messages": messages}
+
+
 def _map_oasst2(example: Mapping[str, object], system_prompt: str) -> dict[str, object]:
     if "conversations" in example:
         messages = _normalize_messages(example["conversations"])
-    elif "messages" in example:
-        messages = _normalize_messages(example["messages"])
     else:
         raise KeyError(
             f"Unsupported oasst2 schema. Available keys: {sorted(example.keys())}"
@@ -251,6 +315,28 @@ def build_sft_train_dataset(cfg: SFTDataConfig) -> HFIterableDataset:
     coding = coding.map(lambda ex: _map_coding(ex, cfg.system_prompt))
     coding = coding.filter(_valid_example).take(cfg.coding_take)
 
+    xlam = _load_stream("Salesforce/xlam-function-calling-60k")
+    xlam = xlam.shuffle(buffer_size=cfg.shuffle_buffer_size, seed=cfg.seed)
+    xlam = xlam.map(lambda ex: _map_xlam(ex, cfg.system_prompt))
+    xlam = xlam.filter(_valid_example).take(cfg.xlam_take)
+
+    toolace = _load_stream("Team-ACE/ToolACE")
+    toolace = toolace.shuffle(buffer_size=cfg.shuffle_buffer_size, seed=cfg.seed)
+    toolace = toolace.map(lambda ex: _map_toolace(ex, cfg.system_prompt))
+    toolace = toolace.filter(_valid_example).take(cfg.toolace_take)
+
+    apigen_mt = _load_stream("Salesforce/APIGen-MT-5k")
+    apigen_mt = apigen_mt.shuffle(buffer_size=cfg.shuffle_buffer_size, seed=cfg.seed)
+    apigen_mt = apigen_mt.map(lambda ex: _map_apigen_mt(ex, cfg.system_prompt))
+    apigen_mt = apigen_mt.filter(_valid_example).take(cfg.apigen_mt_take)
+
+    tool_pool = interleave_datasets(
+        [xlam, toolace, apigen_mt],
+        probabilities=[0.60, 0.25, 0.15],
+        seed=cfg.seed,
+        stopping_strategy="first_exhausted",
+    )
+
     # Japanese pool = 8/10
     # 60k : 35k : 15k
     ja_pool = interleave_datasets(
@@ -260,10 +346,9 @@ def build_sft_train_dataset(cfg: SFTDataConfig) -> HFIterableDataset:
         stopping_strategy="first_exhausted",
     )
 
-    # Final mix = 8 : 1 : 1
     mixed = interleave_datasets(
-        [ja_pool, aya, coding],
-        probabilities=[0.8, 0.1, 0.1],
+        [ja_pool, aya, coding, tool_pool],
+        probabilities=[0.76, 0.09, 0.10, 0.05],
         seed=cfg.seed,
         stopping_strategy="first_exhausted",
     )

@@ -3,6 +3,7 @@ import sys
 from pathlib import Path
 
 from generate import load_from_pretrained, stream_generate_and_print
+from hnet.training.data import DefaultRecordFormatter
 
 
 def parse_args() -> argparse.Namespace:
@@ -31,6 +32,27 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--temperature", type=float, default=1.0)
     parser.add_argument("--top-p", type=float, default=1.0)
     parser.add_argument(
+        "--system-prompt",
+        type=str,
+        default="You are a helpful assistant.",
+        help="System prompt used for chat-style formatting.",
+    )
+    parser.add_argument(
+        "--think-mode",
+        action="store_true",
+        help="Use '/think' control tag instead of '/no_think'.",
+    )
+    parser.add_argument(
+        "--raw-prompt",
+        action="store_true",
+        help="Disable chat-style formatting and use prompt text as-is.",
+    )
+    parser.add_argument(
+        "--show-formatted-prompt",
+        action="store_true",
+        help="Print the formatted prompt before generation.",
+    )
+    parser.add_argument(
         "--prompt",
         action="append",
         dest="prompts",
@@ -52,6 +74,27 @@ def resolve_paths(args: argparse.Namespace) -> tuple[Path, Path]:
         else output_dir / "model_config.json"
     )
     return model_path, config_path
+
+
+def build_chat_prompt(
+    user_prompt: str,
+    system_prompt: str,
+    think_mode: bool,
+) -> str:
+    control = "/think" if think_mode else "/no_think"
+    system_content = f"{system_prompt}\n{control}".strip()
+    formatter = DefaultRecordFormatter()
+    rendered = formatter.format_record(
+        {
+            "messages": [
+                {"role": "system", "content": system_content},
+                {"role": "user", "content": user_prompt},
+            ]
+        }
+    )
+    if rendered is None:
+        return f"assistant: "
+    return f"{rendered}\nassistant: "
 
 
 def main() -> None:
@@ -79,13 +122,25 @@ def main() -> None:
     if args.prompts:
         valid_prompts = [prompt.strip() for prompt in args.prompts if prompt.strip()]
         for idx, prompt in enumerate(valid_prompts, start=1):
+            inference_prompt = (
+                prompt
+                if args.raw_prompt
+                else build_chat_prompt(
+                    prompt,
+                    system_prompt=args.system_prompt,
+                    think_mode=args.think_mode,
+                )
+            )
             print(
                 f"\n[{idx}/{len(valid_prompts)}] Generating "
                 f"(max_tokens={args.max_tokens}, temperature={args.temperature}, top_p={args.top_p})"
             )
+            if args.show_formatted_prompt:
+                print("formatted_prompt:")
+                print(inference_prompt)
             stream_generate_and_print(
                 model,
-                prompt,
+                inference_prompt,
                 max_tokens=args.max_tokens,
                 temperature=args.temperature,
                 top_p=args.top_p,
@@ -97,13 +152,25 @@ def main() -> None:
         prompt = input("\nPrompt: ").strip()
         if not prompt:
             continue
+        inference_prompt = (
+            prompt
+            if args.raw_prompt
+            else build_chat_prompt(
+                prompt,
+                system_prompt=args.system_prompt,
+                think_mode=args.think_mode,
+            )
+        )
 
         print(
             f"\nGenerating (max_tokens={args.max_tokens}, temperature={args.temperature}, top_p={args.top_p})"
         )
+        if args.show_formatted_prompt:
+            print("formatted_prompt:")
+            print(inference_prompt)
         stream_generate_and_print(
             model,
-            prompt,
+            inference_prompt,
             max_tokens=args.max_tokens,
             temperature=args.temperature,
             top_p=args.top_p,

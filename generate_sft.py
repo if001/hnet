@@ -3,7 +3,7 @@ import sys
 from pathlib import Path
 
 from generate import load_from_pretrained, stream_generate_and_print
-from hnet.training.data import DefaultRecordFormatter
+from transformers import AutoTokenizer, PreTrainedTokenizerBase
 
 
 def parse_args() -> argparse.Namespace:
@@ -65,6 +65,12 @@ def parse_args() -> argparse.Namespace:
         dest="prompts",
         help="Prompt text. Repeat this option to generate from multiple prompts.",
     )
+    parser.add_argument(
+        "--chat-tokenizer-path",
+        type=str,
+        default="Qwen/Qwen3-0.6B",
+        help="Tokenizer path used for Qwen chat template rendering.",
+    )
     return parser.parse_args()
 
 
@@ -84,24 +90,21 @@ def resolve_paths(args: argparse.Namespace) -> tuple[Path, Path]:
 
 
 def build_chat_prompt(
+    tokenizer: PreTrainedTokenizerBase,
     user_prompt: str,
     system_prompt: str,
     think_mode: bool,
 ) -> str:
     control = "/think" if think_mode else "/no_think"
     system_content = f"{system_prompt}\n{control}".strip()
-    formatter = DefaultRecordFormatter()
-    rendered = formatter.format_record(
-        {
-            "messages": [
-                {"role": "system", "content": system_content},
-                {"role": "user", "content": user_prompt},
-            ]
-        }
+    return tokenizer.apply_chat_template(
+        [
+            {"role": "system", "content": system_content},
+            {"role": "user", "content": user_prompt},
+        ],
+        tokenize=False,
+        add_generation_prompt=True,
     )
-    if rendered is None:
-        return f"assistant: "
-    return f"{rendered}\nassistant: "
 
 
 def main() -> None:
@@ -125,6 +128,7 @@ def main() -> None:
             str(config_path),
             requested_dtype=args.dtype,
         )
+        chat_tokenizer = AutoTokenizer.from_pretrained(args.chat_tokenizer_path)
         print("Model loaded successfully.")
     except Exception as exc:
         print(f"Error loading model: {exc}")
@@ -137,6 +141,7 @@ def main() -> None:
                 prompt
                 if args.raw_prompt
                 else build_chat_prompt(
+                    chat_tokenizer,
                     prompt,
                     system_prompt=args.system_prompt,
                     think_mode=args.think_mode,
@@ -167,6 +172,7 @@ def main() -> None:
             prompt
             if args.raw_prompt
             else build_chat_prompt(
+                chat_tokenizer,
                 prompt,
                 system_prompt=args.system_prompt,
                 think_mode=args.think_mode,

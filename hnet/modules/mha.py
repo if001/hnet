@@ -375,6 +375,14 @@ class CausalMHA(nn.Module):
         rotary_max_seqlen = (
             inference_params.max_seqlen if inference_params is not None else None
         )
+        rotary_kwargs = dict(kwargs)
+        if (
+            inference_params is not None
+            and inference_params.lengths_per_sample is not None
+            and rotary_max_seqlen is not None
+        ):
+            # Tensor seqlen_offsets requires max_seqlen so rotary cache is materialized.
+            rotary_kwargs["max_seqlen"] = rotary_max_seqlen
 
         qkv = self.Wqkv(x)
         qkv = rearrange(
@@ -386,10 +394,9 @@ class CausalMHA(nn.Module):
             or (self.rotary_emb_dim == 0 or self.rotary_emb_dim % 16 != 0)
         ):
             if self.rotary_emb_dim > 0:
-                # qkv = self.rotary_emb(
-                #     qkv, seqlen_offset=seqlen_offset, max_seqlen=rotary_max_seqlen
-                # )
-                qkv = self.rotary_emb(qkv, seqlen_offset=seqlen_offset, **kwargs)
+                qkv = self.rotary_emb(
+                    qkv, seqlen_offset=seqlen_offset, **rotary_kwargs
+                )
             if inference_params is None:
                 context = self.inner_attn(qkv, **kwargs)
             else:

@@ -3,6 +3,7 @@ import codecs
 import json
 import sys
 import time
+import threading
 import uuid
 from http import HTTPStatus
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
@@ -72,25 +73,33 @@ class HNetOpenAIHandler(BaseHTTPRequestHandler):
         return {"role": "system", "content": system_content}
 
     def _generate_text(self, prompt: str, max_tokens: int, temperature: float, top_p: float) -> str:
+        self.server.generation_semaphore.acquire()
+        with self.server.generation_counter_lock:
+            self.server.active_generations += 1
         decoder = codecs.getincrementaldecoder("utf-8")(errors="replace")
         chunks: list[str] = []
 
-        for token_id in hnet_generate(
-            self.server.model,
-            prompt,
-            max_tokens=max_tokens,
-            temperature=temperature,
-            top_p=top_p,
-        ):
-            chunk = decoder.decode(bytes([token_id]), final=False)
-            if chunk:
-                chunks.append(chunk)
+        try:
+            for token_id in hnet_generate(
+                self.server.model,
+                prompt,
+                max_tokens=max_tokens,
+                temperature=temperature,
+                top_p=top_p,
+            ):
+                chunk = decoder.decode(bytes([token_id]), final=False)
+                if chunk:
+                    chunks.append(chunk)
 
-        tail = decoder.decode(b"", final=True)
-        if tail:
-            chunks.append(tail)
+            tail = decoder.decode(b"", final=True)
+            if tail:
+                chunks.append(tail)
 
-        return "".join(chunks)
+            return "".join(chunks)
+        finally:
+            with self.server.generation_counter_lock:
+                self.server.active_generations -= 1
+            self.server.generation_semaphore.release()
 
     def do_GET(self) -> None:
         if self.path == "/health":
@@ -237,6 +246,12 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--model-name", type=str, default="hnet-local")
     parser.add_argument("--host", type=str, default="0.0.0.0")
     parser.add_argument("--port", type=int, default=8000)
+    parser.add_argument(
+        "--max-active-generations",
+        type=int,
+        default=1,
+        help="Maximum number of in-flight generation calls on shared model (default: 1).",
+    )
     parser.add_argument("--max-tokens", type=int, default=256)
     parser.add_argument("--temperature", type=float, default=0.0)
     parser.add_argument("--top-p", type=float, default=1.0)
@@ -307,6 +322,9 @@ def main() -> None:
 
     server = ThreadingHTTPServer((args.host, args.port), HNetOpenAIHandler)
     server.model = model
+    server.generation_semaphore = threading.Semaphore(args.max_active_generations)
+    server.generation_counter_lock = threading.Lock()
+    server.active_generations = 0
     server.model_name = args.model_name
     server.default_max_tokens = args.max_tokens
     server.default_temperature = args.temperature
@@ -318,7 +336,8 @@ def main() -> None:
     print(
         "server_started=true "
         f"host={args.host} port={args.port} model_name={args.model_name} "
-        f"raw_prompt={args.raw_prompt} think_mode={args.think_mode}"
+        f"raw_prompt={args.raw_prompt} think_mode={args.think_mode} "
+        f"max_active_generations={args.max_active_generations}"
     )
     try:
         server.serve_forever()

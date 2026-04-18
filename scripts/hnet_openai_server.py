@@ -1,6 +1,7 @@
 import argparse
 import codecs
 import json
+import queue
 import sys
 import time
 import threading
@@ -72,8 +73,10 @@ class HNetOpenAIHandler(BaseHTTPRequestHandler):
         system_content = f"{self.server.system_prompt}\n{control}".strip()
         return {"role": "system", "content": system_content}
 
-    def _generate_text(self, prompt: str, max_tokens: int, temperature: float, top_p: float) -> str:
-        self.server.generation_semaphore.acquire()
+    def _generate_text(
+        self, prompt: str, max_tokens: int, temperature: float, top_p: float
+    ) -> str:
+        model = self.server.model_pool.get()
         with self.server.generation_counter_lock:
             self.server.active_generations += 1
         decoder = codecs.getincrementaldecoder("utf-8")(errors="replace")
@@ -81,7 +84,7 @@ class HNetOpenAIHandler(BaseHTTPRequestHandler):
 
         try:
             for token_id in hnet_generate(
-                self.server.model,
+                model,
                 prompt,
                 max_tokens=max_tokens,
                 temperature=temperature,
@@ -99,7 +102,7 @@ class HNetOpenAIHandler(BaseHTTPRequestHandler):
         finally:
             with self.server.generation_counter_lock:
                 self.server.active_generations -= 1
-            self.server.generation_semaphore.release()
+            self.server.model_pool.put(model)
 
     def do_GET(self) -> None:
         if self.path == "/health":
@@ -132,7 +135,12 @@ class HNetOpenAIHandler(BaseHTTPRequestHandler):
         if self.path not in ("/v1/completions", "/v1/chat/completions"):
             self._write_json(
                 HTTPStatus.NOT_FOUND,
-                {"error": {"message": f"Unknown path: {self.path}", "type": "not_found"}},
+                {
+                    "error": {
+                        "message": f"Unknown path: {self.path}",
+                        "type": "not_found",
+                    }
+                },
             )
             return
 
@@ -141,7 +149,12 @@ class HNetOpenAIHandler(BaseHTTPRequestHandler):
         except json.JSONDecodeError as exc:
             self._write_json(
                 HTTPStatus.BAD_REQUEST,
-                {"error": {"message": f"Invalid JSON: {exc}", "type": "invalid_request_error"}},
+                {
+                    "error": {
+                        "message": f"Invalid JSON: {exc}",
+                        "type": "invalid_request_error",
+                    }
+                },
             )
             return
 
@@ -165,18 +178,30 @@ class HNetOpenAIHandler(BaseHTTPRequestHandler):
             if not isinstance(messages, list):
                 self._write_json(
                     HTTPStatus.BAD_REQUEST,
-                    {"error": {"message": "messages must be a list", "type": "invalid_request_error"}},
+                    {
+                        "error": {
+                            "message": "messages must be a list",
+                            "type": "invalid_request_error",
+                        }
+                    },
                 )
                 return
             if self.server.raw_prompt:
-                inference_prompt = "\n".join(str(message.get("content", "")) for message in messages)
+                inference_prompt = "\n".join(
+                    str(message.get("content", "")) for message in messages
+                )
             else:
                 inference_prompt = self._build_chat_prompt(messages)
 
         if not inference_prompt:
             self._write_json(
                 HTTPStatus.BAD_REQUEST,
-                {"error": {"message": "prompt is empty", "type": "invalid_request_error"}},
+                {
+                    "error": {
+                        "message": "prompt is empty",
+                        "type": "invalid_request_error",
+                    }
+                },
             )
             return
 
@@ -240,7 +265,9 @@ class HNetOpenAIHandler(BaseHTTPRequestHandler):
 
 
 def parse_args() -> argparse.Namespace:
-    parser = argparse.ArgumentParser(description="Serve H-Net model with OpenAI-compatible endpoints")
+    parser = argparse.ArgumentParser(
+        description="Serve H-Net model with OpenAI-compatible endpoints"
+    )
     parser.add_argument("--model-path", type=str, required=True)
     parser.add_argument("--config-path", type=str, required=True)
     parser.add_argument("--model-name", type=str, default="hnet-local")
@@ -248,9 +275,11 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--port", type=int, default=8000)
     parser.add_argument(
         "--max-active-generations",
+        "--max-concurrent",
+        dest="max_active_generations",
         type=int,
         default=1,
-        help="Maximum number of in-flight generation calls on shared model (default: 1).",
+        help="Maximum number of concurrent generations. This also controls model instance pool size (default: 1).",
     )
     parser.add_argument("--max-tokens", type=int, default=256)
     parser.add_argument("--temperature", type=float, default=0.0)
@@ -300,29 +329,39 @@ def parse_args() -> argparse.Namespace:
 
 def main() -> None:
     args = parse_args()
+    if args.max_active_generations < 1:
+        raise ValueError("--max-active-generations/--max-concurrent must be >= 1")
 
-    print("loading_model=true")
-    model = load_from_pretrained(
-        args.model_path,
-        args.config_path,
-        requested_dtype=args.dtype,
-    )
+    print(f"loading_model=true instances={args.max_active_generations}")
+    models = []
+    for index in range(args.max_active_generations):
+        print(f"loading_model_instance={index + 1}/{args.max_active_generations}")
+        model = load_from_pretrained(
+            args.model_path,
+            args.config_path,
+            requested_dtype=args.dtype,
+        )
+        models.append(model)
     print("loading_model=false")
 
     if not args.skip_warmup:
-        print("warmup_started=true")
-        generated_tokens = run_warmup(
-            model=model,
-            prompt=args.warmup_prompt,
-            max_tokens=args.warmup_max_tokens,
-            temperature=args.temperature,
-            top_p=args.top_p,
-        )
-        print(f"warmup_finished=true generated_tokens={generated_tokens}")
+        for index, model in enumerate(models, start=1):
+            print(f"warmup_started=true instance={index}/{len(models)}")
+            generated_tokens = run_warmup(
+                model=model,
+                prompt=args.warmup_prompt,
+                max_tokens=args.warmup_max_tokens,
+                temperature=args.temperature,
+                top_p=args.top_p,
+            )
+            print(
+                f"warmup_finished=true instance={index}/{len(models)} generated_tokens={generated_tokens}"
+            )
 
     server = ThreadingHTTPServer((args.host, args.port), HNetOpenAIHandler)
-    server.model = model
-    server.generation_semaphore = threading.Semaphore(args.max_active_generations)
+    server.model_pool = queue.Queue(maxsize=args.max_active_generations)
+    for model in models:
+        server.model_pool.put(model)
     server.generation_counter_lock = threading.Lock()
     server.active_generations = 0
     server.model_name = args.model_name

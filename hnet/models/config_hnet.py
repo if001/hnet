@@ -1,5 +1,5 @@
 from dataclasses import dataclass, field, asdict
-from typing import List, Union
+from typing import Any, List, Union
 
 
 @dataclass
@@ -7,6 +7,7 @@ class AttnConfig:
     num_heads: List = field(default_factory=list)
     rotary_emb_dim: List = field(default_factory=list)
     window_size: List = field(default_factory=list)
+    rope_scaling: Any = None
 
 
 @dataclass

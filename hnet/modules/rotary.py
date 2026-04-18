@@ -1,5 +1,6 @@
 # Copyright (c) 2023, Tri Dao.
 
+import math
 from typing import Optional, Tuple, Union
 
 import torch
@@ -398,6 +399,7 @@ class RotaryEmbedding(torch.nn.Module):
         scale_base=None,
         pos_idx_in_fp32=True,
         device=None,
+        rope_scaling=None,
     ):
         """
         interleaved: if True, rotate pairs of even and odd dimensions (GPT-J style) instead
@@ -417,6 +419,34 @@ class RotaryEmbedding(torch.nn.Module):
         self.dim = dim
         self.base = float(base)
         self.pos_idx_in_fp32 = pos_idx_in_fp32
+
+        rope_scaling = rope_scaling or {}
+        self.rope_type = str(rope_scaling.get("rope_type", "default"))
+        self.rope_factor = float(rope_scaling.get("factor", 1.0))
+        self.original_max_position_embeddings = int(
+            rope_scaling.get("original_max_position_embeddings", 0)
+        )
+        self.beta_fast = float(rope_scaling.get("beta_fast", 32.0))
+        self.beta_slow = float(rope_scaling.get("beta_slow", 1.0))
+        self.attention_factor = float(
+            rope_scaling.get(
+                "attention_factor",
+                (0.1 * math.log(self.rope_factor) + 1.0)
+                if self.rope_factor > 1.0
+                else 1.0,
+            )
+        )
+
+        if self.rope_type not in ("default", "yarn"):
+            raise ValueError(f"Unsupported rope_type: {self.rope_type}")
+        if self.rope_type == "yarn" and self.original_max_position_embeddings <= 0:
+            raise ValueError(
+                "rope_scaling[original_max_position_embeddings] must be provided for yarn"
+            )
+
+        if self.rope_type == "yarn" and scale_base is not None:
+            raise ValueError("xPos (scale_base) and yarn cannot be enabled at the same time")
+
         # Generate and save the inverse frequency buffer (non trainable)
         inv_freq = self._compute_inv_freq(device)
         self.register_buffer("inv_freq", inv_freq, persistent=False)
@@ -436,13 +466,76 @@ class RotaryEmbedding(torch.nn.Module):
         self._cos_k_cached = None
         self._sin_k_cached = None
 
+    @staticmethod
+    def _yarn_find_correction_dim(
+        num_rotations: float,
+        dim: int,
+        base: float,
+        max_position_embeddings: int,
+    ) -> float:
+        return (
+            dim
+            * math.log(max_position_embeddings / (num_rotations * 2.0 * math.pi))
+            / (2.0 * math.log(base))
+        )
+
+    @classmethod
+    def _yarn_find_correction_range(
+        cls,
+        beta_fast: float,
+        beta_slow: float,
+        dim: int,
+        base: float,
+        max_position_embeddings: int,
+    ) -> tuple[int, int]:
+        low = math.floor(
+            cls._yarn_find_correction_dim(
+                beta_fast, dim, base, max_position_embeddings
+            )
+        )
+        high = math.ceil(
+            cls._yarn_find_correction_dim(
+                beta_slow, dim, base, max_position_embeddings
+            )
+        )
+        return max(low, 0), min(high, dim - 1)
+
+    @staticmethod
+    def _yarn_linear_ramp_factor(min_idx: int, max_idx: int, dim: int) -> torch.Tensor:
+        if min_idx >= max_idx:
+            max_idx = min_idx + 1
+        linear = (torch.arange(dim, dtype=torch.float32) - min_idx) / (max_idx - min_idx)
+        return torch.clamp(linear, min=0.0, max=1.0)
+
     def _compute_inv_freq(self, device=None):
-        return 1.0 / (
+        inv_freq_extrapolation = 1.0 / (
             self.base
             ** (
                 torch.arange(0, self.dim, 2, device=device, dtype=torch.float32)
                 / self.dim
             )
+        )
+
+        if self.rope_type != "yarn" or self.rope_factor <= 1.0:
+            return inv_freq_extrapolation
+
+        inv_freq_interpolation = inv_freq_extrapolation / self.rope_factor
+        low, high = self._yarn_find_correction_range(
+            self.beta_fast,
+            self.beta_slow,
+            self.dim,
+            self.base,
+            self.original_max_position_embeddings,
+        )
+        extrapolation_factor = 1.0 - self._yarn_linear_ramp_factor(
+            low,
+            high,
+            self.dim // 2,
+        ).to(device=device)
+
+        return (
+            inv_freq_interpolation * (1.0 - extrapolation_factor)
+            + inv_freq_extrapolation * extrapolation_factor
         )
 
     def _update_cos_sin_cache(self, seqlen, device=None, dtype=None):
@@ -477,8 +570,8 @@ class RotaryEmbedding(torch.nn.Module):
             # freqs = torch.einsum("i,j->ij", t, self.inv_freq)
             freqs = torch.outer(t, inv_freq)
             if self.scale is None:
-                self._cos_cached = torch.cos(freqs).to(dtype)
-                self._sin_cached = torch.sin(freqs).to(dtype)
+                self._cos_cached = (torch.cos(freqs) * self.attention_factor).to(dtype)
+                self._sin_cached = (torch.sin(freqs) * self.attention_factor).to(dtype)
             else:
                 power = (
                     torch.arange(
@@ -490,10 +583,10 @@ class RotaryEmbedding(torch.nn.Module):
                     power, "s -> s 1"
                 )
                 # We want the multiplication by scale to happen in fp32
-                self._cos_cached = (torch.cos(freqs) * scale).to(dtype)
-                self._sin_cached = (torch.sin(freqs) * scale).to(dtype)
-                self._cos_k_cached = (torch.cos(freqs) / scale).to(dtype)
-                self._sin_k_cached = (torch.sin(freqs) / scale).to(dtype)
+                self._cos_cached = (torch.cos(freqs) * scale * self.attention_factor).to(dtype)
+                self._sin_cached = (torch.sin(freqs) * scale * self.attention_factor).to(dtype)
+                self._cos_k_cached = (torch.cos(freqs) / scale * self.attention_factor).to(dtype)
+                self._sin_k_cached = (torch.sin(freqs) / scale * self.attention_factor).to(dtype)
 
     def forward(
         self,

@@ -12,8 +12,6 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from typing import Any
 
-import torch
-
 # Ensure project root is importable when run as:
 #   python scripts/hnet_openai_server.py
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
@@ -21,9 +19,9 @@ if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
 from generate import generate as hnet_generate
+from generate import generate_batch_tokens
 from generate import load_from_pretrained
 from hnet.training.data import DefaultRecordFormatter
-from hnet.utils.tokenizers import ByteTokenizer
 
 
 @dataclasses.dataclass
@@ -56,122 +54,36 @@ def run_warmup(
     return generated_tokens
 
 
-def sample_next_token(logits, temperature: float, top_p: float) -> int:
-    if temperature <= 0.0:
-        return int(torch.argmax(logits).item())
-
-    scaled_logits = logits / temperature
-    if top_p < 1.0:
-        sorted_logits, sorted_indices = torch.sort(scaled_logits, descending=True)
-        cumulative_probs = torch.cumsum(torch.softmax(sorted_logits, dim=-1), dim=-1)
-        sorted_indices_to_remove = cumulative_probs > top_p
-        sorted_indices_to_remove[1:] = sorted_indices_to_remove[:-1].clone()
-        sorted_indices_to_remove[0] = 0
-        indices_to_remove = sorted_indices[sorted_indices_to_remove]
-        scaled_logits = scaled_logits.clone()
-        scaled_logits[indices_to_remove] = -float("inf")
-
-    probs = torch.softmax(scaled_logits, dim=-1)
-    return int(torch.multinomial(probs, 1).item())
-
-
-def set_batch_size_offset(inference_params: Any, offset: int) -> None:
-    if inference_params is None:
-        return
-    if hasattr(inference_params, "batch_size_offset"):
-        inference_params.batch_size_offset = offset
-    for attr_name in (
-        "encoder_state",
-        "routing_module_state",
-        "main_network_state",
-        "dechunk_state",
-        "decoder_state",
-    ):
-        if hasattr(inference_params, attr_name):
-            set_batch_size_offset(getattr(inference_params, attr_name), offset)
-
-
 def generate_batch(model, tasks: list[GenerationTask]) -> None:
     if not tasks:
         return
 
-    tokenizer = ByteTokenizer()
-    device = next(model.parameters()).device
-    eos_id = tokenizer.eos_idx
-
-    sequences = [list(tokenizer.encode([task.prompt], add_bos=True)[0]["input_ids"]) for task in tasks]
-    prompt_lengths = [len(seq) for seq in sequences]
-    batch_size = len(tasks)
-    max_prompt_len = max(prompt_lengths)
-    max_new_tokens = max(task.max_tokens for task in tasks)
-    inference_dtype = next(model.parameters()).dtype
-    inference_cache = model.allocate_inference_cache(
-        batch_size, max_prompt_len + max_new_tokens, dtype=inference_dtype
-    )
-
-    logits = torch.empty((batch_size, tokenizer.vocab_size), device=device, dtype=inference_dtype)
-    with torch.inference_mode():
-        for row, seq in enumerate(sequences):
-            input_ids = torch.tensor(seq, dtype=torch.long, device=device).unsqueeze(0)
-            mask = torch.ones_like(input_ids, dtype=torch.bool, device=device)
-            set_batch_size_offset(inference_cache, row)
-            output = model.forward(input_ids, mask=mask, inference_params=inference_cache)
-            logits[row] = output.logits[0, -1, :]
-
-    set_batch_size_offset(inference_cache, 0)
-
-    decoders = [
-        codecs.getincrementaldecoder("utf-8")(errors="replace")
-        for _ in range(batch_size)
-    ]
-    chunks_per_task: list[list[str]] = [[] for _ in range(batch_size)]
-    generated_count = [0 for _ in range(batch_size)]
-    finished = [False for _ in range(batch_size)]
-
-    for _ in range(max_new_tokens):
-        if all(finished):
-            break
-
-        next_token_ids: list[int] = []
-        for index, task in enumerate(tasks):
-            if finished[index]:
-                next_token_ids.append(eos_id)
-                continue
-
-            next_token_id = sample_next_token(
-                logits[index], temperature=task.temperature, top_p=task.top_p
-            )
-            next_token_ids.append(next_token_id)
-
-            if next_token_id == eos_id:
-                finished[index] = True
-                continue
-
-            sequences[index].append(next_token_id)
-            generated_count[index] += 1
-
-            token_chunk = decoders[index].decode(bytes([next_token_id]), final=False)
-            if token_chunk:
-                chunks_per_task[index].append(token_chunk)
-
-            if generated_count[index] >= task.max_tokens:
-                finished[index] = True
-
-        if all(finished):
-            break
-
-        current_tokens = torch.tensor(
-            next_token_ids, dtype=torch.long, device=device
-        ).unsqueeze(1)
-        with torch.inference_mode():
-            output = model.step(current_tokens, inference_cache)
-        logits = output.logits[:, -1, :]
-
+    grouped: dict[tuple[int, float, float], list[tuple[int, GenerationTask]]] = {}
     for index, task in enumerate(tasks):
-        tail = decoders[index].decode(b"", final=True)
-        if tail:
-            chunks_per_task[index].append(tail)
-        task.result_text = "".join(chunks_per_task[index])
+        key = (task.max_tokens, task.temperature, task.top_p)
+        grouped.setdefault(key, []).append((index, task))
+
+    for (max_tokens, temperature, top_p), indexed_tasks in grouped.items():
+        prompts = [task.prompt for _, task in indexed_tasks]
+        generated_tokens_list = generate_batch_tokens(
+            model=model,
+            prompts=prompts,
+            max_tokens=max_tokens,
+            temperature=temperature,
+            top_p=top_p,
+        )
+
+        for (_, task), generated_tokens in zip(indexed_tasks, generated_tokens_list):
+            decoder = codecs.getincrementaldecoder("utf-8")(errors="replace")
+            chunks: list[str] = []
+            for token_id in generated_tokens:
+                chunk = decoder.decode(bytes([token_id]), final=False)
+                if chunk:
+                    chunks.append(chunk)
+            tail = decoder.decode(b"", final=True)
+            if tail:
+                chunks.append(tail)
+            task.result_text = "".join(chunks)
 
 
 def generation_worker(

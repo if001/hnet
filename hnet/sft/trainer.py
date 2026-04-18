@@ -1,18 +1,15 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Any, Iterable, Iterator, Mapping
+from typing import Any, Iterator
 
 import torch
 import torch.nn.functional as F
-from datasets import concatenate_datasets, load_dataset
 from torch.optim import AdamW
 from torch.utils.data import IterableDataset
-from transformers import Trainer, TrainingArguments
+from transformers import AutoTokenizer, PreTrainedTokenizerBase, Trainer, TrainingArguments
 
 from hnet.models import HNetForCausalLM
-from hnet.training.config import DatasetSource
-from hnet.training.data import DefaultRecordFormatter
 from hnet.utils.tokenizers import ByteTokenizer
 from hnet.utils.train import group_params, load_balancing_loss
 
@@ -24,9 +21,7 @@ class SFTTrainConfig:
     model_config_path: str
     pretrained_model_path: str
     output_dir: str = "artifacts/hnet_sft"
-
-    datasets: list[DatasetSource] | None = None
-    use_sample_dataset: bool = True
+    chat_tokenizer_path: str = "Qwen/Qwen3-0.6B-Instruct"
 
     seq_len: int = 512
     batch_size: int = 2
@@ -49,78 +44,47 @@ class SFTTrainConfig:
     shuffle_buffer_size: int = 512
 
 
-def _iter_custom_dataset_records(
-    sources: list[DatasetSource],
-    shuffle_buffer_size: int,
-    seed: int,
-) -> Iterable[Mapping[str, object]]:
-    datasets = []
-    for source in sources:
-        dataset = load_dataset(
-            source.name,
-            source.config_name,
-            split=source.split,
-            streaming=True,
-        )
-        if source.skip_examples > 0:
-            dataset = dataset.skip(source.skip_examples)
-        if source.take_examples > 0:
-            dataset = dataset.take(source.take_examples)
-        dataset = dataset.shuffle(buffer_size=shuffle_buffer_size, seed=seed)
-        datasets.append(dataset)
-
-    if not datasets:
-        return []
-    if len(datasets) == 1:
-        return datasets[0]
-
-    merged = concatenate_datasets(datasets)
-    return merged.shuffle(buffer_size=shuffle_buffer_size, seed=seed)
-
-
 class StreamingSFTByteDataset(IterableDataset):
     def __init__(
         self,
         *,
         seq_len: int,
         shuffle_buffer_size: int,
-        use_sample_dataset: bool,
-        sources: list[DatasetSource] | None,
         seed: int,
+        chat_tokenizer_path: str,
     ) -> None:
         super().__init__()
         self.seq_len = seq_len
         self.shuffle_buffer_size = shuffle_buffer_size
-        self.use_sample_dataset = use_sample_dataset
-        self.sources = sources
         self.seed = seed
-        self.tokenizer = ByteTokenizer()
-        self.formatter = DefaultRecordFormatter()
+        self.byte_tokenizer = ByteTokenizer()
+        self.chat_tokenizer_path = chat_tokenizer_path
+        self._chat_tokenizer: PreTrainedTokenizerBase | None = None
+
+    def _get_chat_tokenizer(self) -> PreTrainedTokenizerBase:
+        if self._chat_tokenizer is None:
+            self._chat_tokenizer = AutoTokenizer.from_pretrained(
+                self.chat_tokenizer_path
+            )
+        return self._chat_tokenizer
 
     def _iter_texts(self) -> Iterator[str]:
-        if self.use_sample_dataset and not self.sources:
-            sample_cfg = SFTDataConfig(
-                seed=self.seed,
-                shuffle_buffer_size=self.shuffle_buffer_size,
-            )
-            dataset = build_sft_train_dataset(sample_cfg)
-            for example in dataset:
-                text = self.formatter.format_record(example)
-                if text:
-                    yield text
-            return
-
-        if not self.sources:
-            raise ValueError(
-                "Either --dataset must be provided or sample dataset mode must be enabled"
-            )
-
-        for record in _iter_custom_dataset_records(
-            self.sources,
-            shuffle_buffer_size=self.shuffle_buffer_size,
+        sample_cfg = SFTDataConfig(
             seed=self.seed,
-        ):
-            text = self.formatter.format_record(record)
+            shuffle_buffer_size=self.shuffle_buffer_size,
+        )
+        dataset = build_sft_train_dataset(sample_cfg)
+        tokenizer = self._get_chat_tokenizer()
+
+        for record in dataset:
+            messages = record.get("messages")
+            if not isinstance(messages, list):
+                continue
+            text = tokenizer.apply_chat_template(
+                messages,
+                tokenize=False,
+                add_generation_prompt=False,
+            )
             if text:
                 yield text
 
@@ -128,7 +92,9 @@ class StreamingSFTByteDataset(IterableDataset):
         token_buffer: list[int] = []
 
         for text in self._iter_texts():
-            encoded = self.tokenizer.encode([text], add_bos=True, add_eos=True)[0][
+            encoded = self.byte_tokenizer.encode(
+                [text], add_bos=True, add_eos=True
+            )[0][
                 "input_ids"
             ].tolist()
             token_buffer.extend(encoded)

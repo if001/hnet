@@ -12,7 +12,6 @@ from transformers import set_seed
 
 from hnet.models import HNetForCausalLM, load_hnet_config
 from hnet.models.config_io import save_hnet_config
-from hnet.training.config import DatasetSource
 
 from hnet.sft.trainer import (
     HNetSFTTrainer,
@@ -49,17 +48,11 @@ def parse_args() -> SFTTrainConfig:
     parser.add_argument("--model-config-path", type=str, required=True)
     parser.add_argument("--pretrained-model-path", type=str, required=True)
     parser.add_argument("--output-dir", type=str, default="artifacts/hnet_sft")
-
     parser.add_argument(
-        "--dataset",
-        action="append",
-        dest="datasets",
-        help="Hugging Face dataset name. Repeat to specify multiple datasets.",
-    )
-    parser.add_argument(
-        "--use-sample-dataset",
-        action="store_true",
-        help="Use hnet/sft/dataset.py sample mix when --dataset is not provided.",
+        "--chat-tokenizer-path",
+        type=str,
+        default="Qwen/Qwen3-0.6B-Instruct",
+        help="Tokenizer used for Qwen3 chat template rendering.",
     )
 
     parser.add_argument("--seq-len", type=int, default=512)
@@ -96,10 +89,6 @@ def parse_args() -> SFTTrainConfig:
 
     args = parser.parse_args()
 
-    datasets = None
-    if args.datasets:
-        datasets = [DatasetSource(name=name) for name in args.datasets]
-
     compression_ratios = args.compression_ratios or [4.0]
     lr_multipliers = args.lr_multipliers or [1.0, 1.0]
 
@@ -107,8 +96,7 @@ def parse_args() -> SFTTrainConfig:
         model_config_path=args.model_config_path,
         pretrained_model_path=args.pretrained_model_path,
         output_dir=args.output_dir,
-        datasets=datasets,
-        use_sample_dataset=bool(args.use_sample_dataset) or not args.datasets,
+        chat_tokenizer_path=args.chat_tokenizer_path,
         seq_len=args.seq_len,
         batch_size=args.batch_size,
         grad_accum_steps=args.grad_accum_steps,
@@ -146,9 +134,8 @@ def train(config: SFTTrainConfig) -> None:
     train_dataset = StreamingSFTByteDataset(
         seq_len=config.seq_len,
         shuffle_buffer_size=config.shuffle_buffer_size,
-        use_sample_dataset=config.use_sample_dataset,
-        sources=config.datasets,
         seed=config.seed,
+        chat_tokenizer_path=config.chat_tokenizer_path,
     )
 
     training_args = build_training_arguments(config)
@@ -181,10 +168,6 @@ def train(config: SFTTrainConfig) -> None:
 
 def main() -> None:
     config = parse_args()
-    if not config.datasets and not config.use_sample_dataset:
-        raise ValueError(
-            "No training dataset configured. Specify --dataset or pass --use-sample-dataset"
-        )
     train(config)
 
 

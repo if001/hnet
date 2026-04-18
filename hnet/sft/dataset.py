@@ -5,11 +5,8 @@ import re
 from typing import Iterator, Mapping, Sequence
 import json
 
-import torch
-from torch.utils.data import DataLoader, IterableDataset
 from datasets import interleave_datasets, load_dataset
 from datasets.iterable_dataset import IterableDataset as HFIterableDataset
-from transformers import PreTrainedTokenizerBase
 
 
 ChatMessage = dict[str, str]
@@ -433,62 +430,3 @@ def build_sft_train_dataset(cfg: SFTDataConfig) -> HFIterableDataset:
         stopping_strategy="first_exhausted",
     )
     return mixed
-
-
-class HFTorchIterableDataset(IterableDataset):
-    def __init__(self, dataset: HFIterableDataset) -> None:
-        super().__init__()
-        self.dataset = dataset
-
-    def __iter__(self) -> Iterator[dict[str, object]]:
-        for example in self.dataset:
-            yield {"messages": example["messages"]}
-
-
-def build_collate_fn(
-    tokenizer: PreTrainedTokenizerBase,
-    max_length: int,
-):
-    def collate_fn(batch: list[Mapping[str, object]]) -> dict[str, torch.Tensor]:
-        chats = [example["messages"] for example in batch]
-
-        # tokenizer.chat_template は事前に Qwen3 互換のものを設定しておく
-        texts = [
-            tokenizer.apply_chat_template(
-                chat,
-                tokenize=False,
-                add_generation_prompt=False,
-            )
-            for chat in chats
-        ]
-
-        encoded = tokenizer(
-            texts,
-            padding=True,
-            truncation=True,
-            max_length=max_length,
-            return_tensors="pt",
-            add_special_tokens=False,
-        )
-
-        labels = encoded["input_ids"].clone()
-        labels[encoded["attention_mask"] == 0] = -100
-        encoded["labels"] = labels
-        return encoded
-
-    return collate_fn
-
-
-def build_sft_train_dataloader(
-    tokenizer: PreTrainedTokenizerBase,
-    cfg: SFTDataConfig,
-) -> DataLoader:
-    hf_dataset = build_sft_train_dataset(cfg)
-    torch_dataset = HFTorchIterableDataset(hf_dataset)
-
-    return DataLoader(
-        torch_dataset,
-        batch_size=cfg.batch_size,
-        num_workers=cfg.num_workers,
-        collate_fn=build_collate_fn(tokenizer, cfg.max_length),
-    )

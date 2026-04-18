@@ -1,6 +1,5 @@
 import argparse
 import codecs
-import dataclasses
 import json
 import queue
 import sys
@@ -12,8 +11,6 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from typing import Any
 
-import torch
-
 # Ensure project root is importable when run as:
 #   python scripts/hnet_openai_server.py
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
@@ -23,18 +20,6 @@ if str(PROJECT_ROOT) not in sys.path:
 from generate import generate as hnet_generate
 from generate import load_from_pretrained
 from hnet.training.data import DefaultRecordFormatter
-from hnet.utils.tokenizers import ByteTokenizer
-
-
-@dataclasses.dataclass
-class GenerationTask:
-    prompt: str
-    max_tokens: int
-    temperature: float
-    top_p: float
-    done_event: threading.Event
-    result_text: str = ""
-    error: Exception | None = None
 
 
 def run_warmup(
@@ -54,158 +39,6 @@ def run_warmup(
     ):
         generated_tokens += 1
     return generated_tokens
-
-
-def sample_next_token(logits, temperature: float, top_p: float) -> int:
-    if temperature <= 0.0:
-        return int(torch.argmax(logits).item())
-
-    scaled_logits = logits / temperature
-    if top_p < 1.0:
-        sorted_logits, sorted_indices = torch.sort(scaled_logits, descending=True)
-        cumulative_probs = torch.cumsum(torch.softmax(sorted_logits, dim=-1), dim=-1)
-        sorted_indices_to_remove = cumulative_probs > top_p
-        sorted_indices_to_remove[1:] = sorted_indices_to_remove[:-1].clone()
-        sorted_indices_to_remove[0] = 0
-        indices_to_remove = sorted_indices[sorted_indices_to_remove]
-        scaled_logits = scaled_logits.clone()
-        scaled_logits[indices_to_remove] = -float("inf")
-
-    probs = torch.softmax(scaled_logits, dim=-1)
-    return int(torch.multinomial(probs, 1).item())
-
-
-def generate_batch(model, tasks: list[GenerationTask]) -> None:
-    if not tasks:
-        return
-
-    tokenizer = ByteTokenizer()
-    device = next(model.parameters()).device
-    inference_dtype = next(model.parameters()).dtype
-    eos_id = tokenizer.eos_idx
-
-    encoded_list = [tokenizer.encode([task.prompt], add_bos=True)[0]["input_ids"] for task in tasks]
-    prompt_lengths = [len(ids) for ids in encoded_list]
-    batch_size = len(tasks)
-    max_prompt_len = max(prompt_lengths)
-    max_new_tokens = max(task.max_tokens for task in tasks)
-
-    input_ids = torch.full(
-        (batch_size, max_prompt_len),
-        fill_value=eos_id,
-        dtype=torch.long,
-        device=device,
-    )
-    mask = torch.zeros((batch_size, max_prompt_len), dtype=torch.bool, device=device)
-    for row, ids in enumerate(encoded_list):
-        seq = torch.tensor(ids, dtype=torch.long, device=device)
-        input_ids[row, : seq.numel()] = seq
-        mask[row, : seq.numel()] = True
-
-    inference_cache = model.allocate_inference_cache(
-        batch_size, max_prompt_len + max_new_tokens, dtype=inference_dtype
-    )
-
-    with torch.inference_mode():
-        output = model.forward(input_ids, mask=mask, inference_params=inference_cache)
-
-    row_indices = torch.arange(batch_size, device=device)
-    last_positions = torch.tensor(prompt_lengths, dtype=torch.long, device=device) - 1
-    logits = output.logits[row_indices, last_positions, :]
-
-    decoders = [codecs.getincrementaldecoder("utf-8")(errors="replace") for _ in range(batch_size)]
-    chunks_per_task: list[list[str]] = [[] for _ in range(batch_size)]
-    generated_count = [0 for _ in range(batch_size)]
-    finished = [False for _ in range(batch_size)]
-
-    for _ in range(max_new_tokens):
-        if all(finished):
-            break
-
-        next_token_ids = []
-        for index, task in enumerate(tasks):
-            if finished[index]:
-                next_token_ids.append(eos_id)
-                continue
-
-            next_token_id = sample_next_token(
-                logits[index], temperature=task.temperature, top_p=task.top_p
-            )
-            next_token_ids.append(next_token_id)
-
-            if next_token_id == eos_id:
-                finished[index] = True
-                continue
-
-            generated_count[index] += 1
-            token_chunk = decoders[index].decode(bytes([next_token_id]), final=False)
-            if token_chunk:
-                chunks_per_task[index].append(token_chunk)
-
-            if generated_count[index] >= task.max_tokens:
-                finished[index] = True
-
-        if all(finished):
-            break
-
-        current_tokens = torch.tensor(
-            next_token_ids, dtype=torch.long, device=device
-        ).unsqueeze(1)
-        with torch.inference_mode():
-            output = model.step(current_tokens, inference_cache)
-        logits = output.logits[:, -1, :]
-
-    for index, task in enumerate(tasks):
-        tail = decoders[index].decode(b"", final=True)
-        if tail:
-            chunks_per_task[index].append(tail)
-        task.result_text = "".join(chunks_per_task[index])
-
-
-def generation_worker(
-    *,
-    worker_id: int,
-    model,
-    request_queue: queue.Queue,
-    batch_size: int,
-    batch_wait_ms: int,
-) -> None:
-    del worker_id  # reserved for future worker-specific logging
-    while True:
-        first_task = request_queue.get()
-        if first_task is None:
-            request_queue.task_done()
-            return
-
-        tasks: list[GenerationTask] = [first_task]
-        wait_seconds = max(batch_wait_ms, 0) / 1000.0
-        deadline = time.time() + wait_seconds
-
-        while len(tasks) < batch_size:
-            timeout = deadline - time.time()
-            if timeout <= 0:
-                break
-            try:
-                next_task = request_queue.get(timeout=timeout)
-            except queue.Empty:
-                break
-
-            if next_task is None:
-                request_queue.task_done()
-                request_queue.put(None)
-                break
-
-            tasks.append(next_task)
-
-        try:
-            generate_batch(model, tasks)
-        except Exception as exc:  # noqa: BLE001
-            for task in tasks:
-                task.error = exc
-        finally:
-            for task in tasks:
-                task.done_event.set()
-                request_queue.task_done()
 
 
 class HNetOpenAIHandler(BaseHTTPRequestHandler):
@@ -243,18 +76,33 @@ class HNetOpenAIHandler(BaseHTTPRequestHandler):
     def _generate_text(
         self, prompt: str, max_tokens: int, temperature: float, top_p: float
     ) -> str:
-        task = GenerationTask(
-            prompt=prompt,
-            max_tokens=max_tokens,
-            temperature=temperature,
-            top_p=top_p,
-            done_event=threading.Event(),
-        )
-        self.server.request_queue.put(task)
-        task.done_event.wait()
-        if task.error is not None:
-            raise task.error
-        return task.result_text
+        model = self.server.model_pool.get()
+        with self.server.generation_counter_lock:
+            self.server.active_generations += 1
+        decoder = codecs.getincrementaldecoder("utf-8")(errors="replace")
+        chunks: list[str] = []
+
+        try:
+            for token_id in hnet_generate(
+                model,
+                prompt,
+                max_tokens=max_tokens,
+                temperature=temperature,
+                top_p=top_p,
+            ):
+                chunk = decoder.decode(bytes([token_id]), final=False)
+                if chunk:
+                    chunks.append(chunk)
+
+            tail = decoder.decode(b"", final=True)
+            if tail:
+                chunks.append(tail)
+
+            return "".join(chunks)
+        finally:
+            with self.server.generation_counter_lock:
+                self.server.active_generations -= 1
+            self.server.model_pool.put(model)
 
     def do_GET(self) -> None:
         if self.path == "/health":
@@ -431,19 +279,7 @@ def parse_args() -> argparse.Namespace:
         dest="max_active_generations",
         type=int,
         default=1,
-        help="Maximum number of model instances / generation workers (default: 1).",
-    )
-    parser.add_argument(
-        "--batch-size",
-        type=int,
-        default=8,
-        help="Maximum requests merged into one generation batch per worker (default: 8).",
-    )
-    parser.add_argument(
-        "--batch-wait-ms",
-        type=int,
-        default=5,
-        help="Batching window in milliseconds to wait for additional requests (default: 5).",
+        help="Maximum number of concurrent generations. This also controls model instance pool size (default: 1).",
     )
     parser.add_argument("--max-tokens", type=int, default=256)
     parser.add_argument("--temperature", type=float, default=0.0)
@@ -495,10 +331,6 @@ def main() -> None:
     args = parse_args()
     if args.max_active_generations < 1:
         raise ValueError("--max-active-generations/--max-concurrent must be >= 1")
-    if args.batch_size < 1:
-        raise ValueError("--batch-size must be >= 1")
-    if args.batch_wait_ms < 0:
-        raise ValueError("--batch-wait-ms must be >= 0")
 
     print(f"loading_model=true instances={args.max_active_generations}")
     models = []
@@ -527,22 +359,11 @@ def main() -> None:
             )
 
     server = ThreadingHTTPServer((args.host, args.port), HNetOpenAIHandler)
-    server.request_queue = queue.Queue()
-    server.workers = []
-    for worker_id, model in enumerate(models):
-        worker = threading.Thread(
-            target=generation_worker,
-            kwargs={
-                "worker_id": worker_id,
-                "model": model,
-                "request_queue": server.request_queue,
-                "batch_size": args.batch_size,
-                "batch_wait_ms": args.batch_wait_ms,
-            },
-            daemon=True,
-        )
-        worker.start()
-        server.workers.append(worker)
+    server.model_pool = queue.Queue(maxsize=args.max_active_generations)
+    for model in models:
+        server.model_pool.put(model)
+    server.generation_counter_lock = threading.Lock()
+    server.active_generations = 0
     server.model_name = args.model_name
     server.default_max_tokens = args.max_tokens
     server.default_temperature = args.temperature
@@ -555,18 +376,13 @@ def main() -> None:
         "server_started=true "
         f"host={args.host} port={args.port} model_name={args.model_name} "
         f"raw_prompt={args.raw_prompt} think_mode={args.think_mode} "
-        f"max_active_generations={args.max_active_generations} "
-        f"batch_size={args.batch_size} batch_wait_ms={args.batch_wait_ms}"
+        f"max_active_generations={args.max_active_generations}"
     )
     try:
         server.serve_forever()
     except KeyboardInterrupt:
         pass
     finally:
-        for _ in server.workers:
-            server.request_queue.put(None)
-        for worker in server.workers:
-            worker.join()
         server.server_close()
         print("server_stopped=true")
 

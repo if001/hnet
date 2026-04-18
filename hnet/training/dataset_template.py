@@ -222,11 +222,11 @@ SOURCES_JA8_EN1_CODE1_SMALL: list[DatasetSource] = [
         split="train",
         take_examples=10_000,
     ),
-    DatasetSource(
-        name="if001/aozorabunko-clean-sin",
-        split="train",
-        take_examples=5_000,
-    ),
+    # DatasetSource(
+    #     name="if001/aozorabunko-clean-sin",
+    #     split="train",
+    #     take_examples=5_000,
+    # ),
 ]
 
 ## 8:1:1
@@ -276,7 +276,7 @@ SOURCES_JA8_EN1_CODE1_20: list[DatasetSource] = [
 
 
 ## 8:1:1
-## byte換算で12B
+## byte換算で
 SOURCES_JA8_EN1_CODE1_30: list[DatasetSource] = [
     DatasetSource(
         name="hotchpotch/fineweb-2-edu-japanese",
@@ -310,6 +310,50 @@ SOURCES_JA8_EN1_CODE1_30: list[DatasetSource] = [
         name="codeparrot/codeparrot-clean",
         split="train",
         take_examples=100_000 * 3,
+        skip_examples=10_000,
+    ),
+    DatasetSource(
+        name="if001/aozorabunko-clean-sin",
+        split="train",
+        take_examples=10_000,
+    ),
+]
+
+## 8:1:1
+## byte換算で
+SOURCES_JA8_EN1_CODE1_50: list[DatasetSource] = [
+    DatasetSource(
+        name="hotchpotch/fineweb-2-edu-japanese",
+        config_name="small_tokens_cleaned",
+        split="train",
+        take_examples=680_000 * 5,
+        skip_examples=78_000,
+    ),
+    DatasetSource(
+        name="wikimedia/wikipedia",
+        config_name="20231101.ja",
+        split="train",
+        take_examples=120_000 * 5,
+        skip_examples=12_000,
+    ),
+    DatasetSource(
+        name="HuggingFaceFW/fineweb-edu",
+        config_name="sample-10BT",
+        split="train",
+        take_examples=80_000 * 5,
+        skip_examples=10_000,  ## 先頭10000件スキップが推奨
+    ),
+    DatasetSource(
+        name="wikimedia/wikipedia",
+        config_name="20231101.en",
+        split="train",
+        take_examples=20_000 * 5,
+        skip_examples=2_000,
+    ),
+    DatasetSource(
+        name="codeparrot/codeparrot-clean",
+        split="train",
+        take_examples=100_000 * 5,
         skip_examples=10_000,
     ),
     DatasetSource(

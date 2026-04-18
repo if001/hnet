@@ -78,14 +78,16 @@ def main() -> None:
     start = time.time()
     micro_batches = 0
     samples = 0
+    input_tokens_bytes = 0
 
     for micro_batches, batch in enumerate(dataloader, start=1):
         samples += int(batch["input_ids"].shape[0])
+        input_tokens_bytes += int(batch["input_ids"].numel())
         if args.log_every > 0 and micro_batches % args.log_every == 0:
             elapsed = max(time.time() - start, 1e-8)
             print(
                 f"progress micro_batches={micro_batches} samples={samples} "
-                f"elapsed_sec={elapsed:.1f}"
+                f"input_tokens_bytes={input_tokens_bytes} elapsed_sec={elapsed:.1f}"
             )
 
     optimizer_steps = ceil(micro_batches / args.grad_accum_steps) if micro_batches > 0 else 0
@@ -93,6 +95,7 @@ def main() -> None:
 
     print(f"epoch_micro_batches={micro_batches}")
     print(f"epoch_samples={samples}")
+    print(f"epoch_input_tokens_bytes={input_tokens_bytes}")
     print(f"epoch_optimizer_steps={optimizer_steps}")
     print(f"elapsed_sec={elapsed:.1f}")
 

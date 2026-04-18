@@ -201,6 +201,7 @@ class CausalMHA(nn.Module):
         rotary_emb_dim=0,
         rotary_emb_base=10000.0,
         rotary_emb_interleaved=False,
+        rope_scaling=None,
         device=None,
         dtype=None,
     ) -> None:
@@ -228,6 +229,7 @@ class CausalMHA(nn.Module):
                 base=rotary_emb_base,
                 interleaved=rotary_emb_interleaved,
                 device=device,
+                rope_scaling=rope_scaling,
             )
 
         self.Wqkv = nn.Linear(d_model, qkv_dim, bias=qkv_proj_bias, **factory_kwargs)

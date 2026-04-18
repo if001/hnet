@@ -5,9 +5,10 @@ import math
 import random
 from dataclasses import asdict
 from pathlib import Path
-from typing import Any
+from typing import Any, Mapping
 
 import numpy as np
+from omegaconf import ListConfig
 import torch
 import torch.nn.functional as F
 from torch.optim import AdamW
@@ -142,8 +143,12 @@ def create_model(
     dtype: torch.dtype,
 ) -> tuple[HNetForCausalLM, HNetConfig]:
     config = load_hnet_config(training_config.model_config_path)
+    if training_config.rope_scaling is not None:
+        config.attn_cfg.rope_scaling = dict(training_config.rope_scaling)
+
     model = HNetForCausalLM(config, device=device, dtype=dtype)
-    model.init_weights()
+    if training_config.resume_from_checkpoint is None:
+        model.init_weights()
     model.apply_lr_multiplier(training_config.lr_multipliers)
     return model, config
 
@@ -231,6 +236,31 @@ def save_training_config(training_config: TrainingConfig, output_path: Path) -> 
         encoding="utf-8",
     )
     return output_path
+
+
+def extract_model_state_dict(checkpoint: object) -> Mapping[str, torch.Tensor]:
+    if isinstance(checkpoint, Mapping) and "model" in checkpoint:
+        model_state = checkpoint["model"]
+        if isinstance(model_state, Mapping):
+            return model_state
+    if isinstance(checkpoint, Mapping):
+        return checkpoint
+    raise TypeError("Unsupported checkpoint format")
+
+
+def load_checkpoint_file(checkpoint_path: str, device: torch.device) -> object:
+    major, minor = map(int, torch.__version__.split(".")[:2])
+    if (major, minor) >= (2, 6):
+        with torch.serialization.safe_globals([ListConfig]):
+            return torch.load(checkpoint_path, map_location=device, weights_only=False)
+    return torch.load(checkpoint_path, map_location=device)
+
+
+def move_optimizer_state_to_device(optimizer: AdamW, device: torch.device) -> None:
+    for state in optimizer.state.values():
+        for key, value in state.items():
+            if torch.is_tensor(value):
+                state[key] = value.to(device)
 
 
 def estimate_dataset_examples(
@@ -521,8 +551,30 @@ def train(training_config: TrainingConfig) -> None:
     training_dtype = get_training_dtype(device)
     use_grad_scaler = device.type == "cuda" and training_dtype == torch.float16
     logger.info("training_dtype=%s grad_scaler=%s", training_dtype, use_grad_scaler)
+    logger.info(
+        "resume_from_checkpoint=%s resume_optimizer=%s resume_step=%s",
+        training_config.resume_from_checkpoint,
+        training_config.resume_optimizer,
+        training_config.resume_step,
+    )
 
     model, model_config = create_model(training_config, device, training_dtype)
+
+    resume_checkpoint = None
+    resumed_step = 0
+    if training_config.resume_from_checkpoint is not None:
+        resume_checkpoint = load_checkpoint_file(
+            training_config.resume_from_checkpoint, device
+        )
+        resume_state_dict = extract_model_state_dict(resume_checkpoint)
+        model.load_state_dict(resume_state_dict, strict=True)
+        logger.info("resumed_model_from=%s", training_config.resume_from_checkpoint)
+
+        if training_config.resume_step and isinstance(resume_checkpoint, Mapping):
+            raw_step = resume_checkpoint.get("step")
+            if isinstance(raw_step, int):
+                resumed_step = raw_step
+                logger.info("resumed_step=%d", resumed_step)
     output_dir = Path(training_config.output_dir)
     saved_config_path = save_hnet_config(model_config, output_dir / "model_config.json")
     logger.info("saved_model_config=%s", saved_config_path)
@@ -606,6 +658,15 @@ def train(training_config: TrainingConfig) -> None:
     param_groups = group_params(model)
     apply_weight_decay(param_groups, training_config.weight_decay)
     optimizer = AdamW(param_groups, betas=(0.9, 0.95), eps=1e-8)
+    if (
+        resume_checkpoint is not None
+        and training_config.resume_optimizer
+        and isinstance(resume_checkpoint, Mapping)
+        and isinstance(resume_checkpoint.get("optimizer"), Mapping)
+    ):
+        optimizer.load_state_dict(resume_checkpoint["optimizer"])
+        move_optimizer_state_to_device(optimizer, device)
+        logger.info("resumed_optimizer=true")
 
     validation_dataloader = create_dataloader(
         training_config,
@@ -622,11 +683,10 @@ def train(training_config: TrainingConfig) -> None:
     scaler = torch.amp.GradScaler("cuda", enabled=use_grad_scaler)
 
     last_saved_step = 0
-    completed_steps = 0
+    completed_steps = resumed_step
 
     while (
-        training_config.max_steps is None
-        or completed_steps < training_config.max_steps
+        training_config.max_steps is None or completed_steps < training_config.max_steps
     ):
         optimizer.zero_grad(set_to_none=True)
         ce_loss_value = 0.0

@@ -277,7 +277,7 @@ SOURCES_JA8_EN1_CODE1_20: list[DatasetSource] = [
 
 ## 8:1:1
 ## byte換算で12B
-SOURCES_JA8_EN1_CODE1_40: list[DatasetSource] = [
+SOURCES_JA8_EN1_CODE1_30: list[DatasetSource] = [
     DatasetSource(
         name="hotchpotch/fineweb-2-edu-japanese",
         config_name="small_tokens_cleaned",

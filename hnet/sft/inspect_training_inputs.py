@@ -55,7 +55,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--chat-tokenizer-path",
         type=str,
-        default="Qwen/Qwen3-0.6B-Instruct",
+        default="Qwen/Qwen3-0.6B",
         help="Tokenizer path used for apply_chat_template",
     )
     parser.add_argument(

@@ -177,17 +177,92 @@ python generate_sft.py \
 ```
 
 ## eval
+H-Net サーバー起動
+(`--raw-prompt` を付けない限り、SFT想定のchat整形が適用されます)
 
 ``` sh
-python scripts/hnet_openai_server.py \
-    --model-path /path/to/checkpoint_step_xxxxxx.pt \
-    --config-path /path/to/model_config.json \
+!nohup python scripts/hnet_openai_server.py \
+    --model-path /content/hnet/artifacts/hnet_2stage_200m_sft/sft_final_model.pt \
+    --config-path /content/hnet/artifacts/hnet_2stage_200m_sft/model_config.json \
     --model-name hnet-local \
     --host 0.0.0.0 \
     --port 8000 \
     --max-tokens 256 \
     --temperature 0.0 \
-    --top-p 1.0
+    --dtype bf16 \
+    --temperature 0.0 \
+    --top-p 1.0 \
+    --warmup-prompt "こんにちは" \
+    --max-active-generations 2 \
+    --warmup-max-tokens 1 > /content/hnet_server.log 2>&1 &
+```
+
+起動確認
+``` sh
+!curl -s http://127.0.0.1:8000/health
+```
+
+`llm-jp-eval` の依存をインストール
+
+``` sh
+cd hnet
+git clone https://github.com/llm-jp/llm-jp-eval.git
+
+cd llm-jp-eval
+uv sync
+```
+
+
+データセットの準備
+``` sh
+!uv run scripts/preprocess_dataset.py -d all
+```
+
+configを作成
+``` sh
+cat <<EOF > llm-jp-eval/configs/config_hnet_online.yaml
+run_name: hnet-online
+output_dir: './local_files'
+eval_dataset_config_path: './eval_configs/all_datasets.yaml'
+include_non_commercial: false
+max_num_samples: 10
+
+exporters:
+  local:
+    export_output_table: true
+    output_top_n: 5
+
+online_inference_config:
+  provider: vllm-openai
+  max_concurrent: 4
+  hostname: localhost:8000
+  model_name: hnet-local
+  generation_config:
+    temperature: 0.0
+    top_p: 1.0
+    max_tokens: 256
+
+default_answer_extract_pattern: "(?s)^(.*?)(?=\\n\\n|\\Z)"
+
+metainfo:
+  basemodel_name: hnet
+  model_type: external
+EOF
+```
+
+3. `llm-jp-eval` を実行
+``` sh
+cd llm-jp-eval
+!MPLBACKEND=Agg uv run scripts/evaluate_llm.py eval --config configs/config_hnet_online.yaml
+```
+
+4. 必要に応じて評価対象数を増やす
+
+``` sh
+cd llm-jp-eval
+uv run scripts/evaluate_llm.py eval \
+  --config configs/config_hnet_online.yaml \
+  max_num_samples=-1
 ```
 
 

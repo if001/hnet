@@ -51,7 +51,7 @@ def parse_args() -> SFTTrainConfig:
     parser.add_argument(
         "--chat-tokenizer-path",
         type=str,
-        default="Qwen/Qwen3-0.6B-Instruct",
+        default="Qwen/Qwen3-0.6B",
         help="Tokenizer used for Qwen3 chat template rendering.",
     )
 

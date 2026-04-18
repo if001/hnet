@@ -2,7 +2,7 @@ import argparse
 import codecs
 import sys
 from collections.abc import Mapping
-from typing import Literal
+from typing import Any, Literal
 
 import torch
 from omegaconf import ListConfig
@@ -80,6 +80,115 @@ def load_from_pretrained(
     return model
 
 
+def sample_next_token(logits: torch.Tensor, temperature: float, top_p: float) -> int:
+    if temperature <= 0.0:
+        return int(torch.argmax(logits).item())
+
+    sampled_logits = logits / temperature
+    if top_p < 1.0:
+        sorted_logits, sorted_indices = torch.sort(sampled_logits, descending=True)
+        cumulative_probs = torch.cumsum(torch.softmax(sorted_logits, dim=-1), dim=-1)
+        sorted_indices_to_remove = cumulative_probs > top_p
+        sorted_indices_to_remove[1:] = sorted_indices_to_remove[:-1].clone()
+        sorted_indices_to_remove[0] = 0
+        indices_to_remove = sorted_indices[sorted_indices_to_remove]
+        sampled_logits = sampled_logits.clone()
+        sampled_logits[indices_to_remove] = -float("inf")
+
+    probs = torch.softmax(sampled_logits, dim=-1)
+    return int(torch.multinomial(probs, 1).item())
+
+
+def set_batch_size_offset(inference_params: Any, offset: int) -> None:
+    if inference_params is None:
+        return
+    if hasattr(inference_params, "batch_size_offset"):
+        inference_params.batch_size_offset = offset
+    for attr_name in (
+        "encoder_state",
+        "routing_module_state",
+        "main_network_state",
+        "dechunk_state",
+        "decoder_state",
+    ):
+        if hasattr(inference_params, attr_name):
+            set_batch_size_offset(getattr(inference_params, attr_name), offset)
+
+
+def generate_batch_tokens(
+    model,
+    prompts: list[str],
+    max_tokens: int = 1024,
+    temperature: float = 1.0,
+    top_p: float = 0.9,
+) -> list[list[int]]:
+    """Generate tokens for multiple prompts in a single batched decode loop."""
+    if not prompts:
+        return []
+
+    device = next(model.parameters()).device
+    inference_dtype = next(model.parameters()).dtype
+    tokenizer = ByteTokenizer()
+    eos_id = tokenizer.eos_idx
+
+    encoded = tokenizer.encode(prompts, add_bos=True)
+    sequences = [list(item["input_ids"]) for item in encoded]
+    batch_size = len(sequences)
+    max_prompt_len = max(len(seq) for seq in sequences)
+
+    inference_cache = model.allocate_inference_cache(
+        batch_size, max_prompt_len + max_tokens, dtype=inference_dtype
+    )
+
+    logits = torch.empty(
+        (batch_size, tokenizer.vocab_size), device=device, dtype=inference_dtype
+    )
+    with torch.inference_mode():
+        for row, seq in enumerate(sequences):
+            input_ids = torch.tensor(seq, dtype=torch.long, device=device).unsqueeze(0)
+            mask = torch.ones_like(input_ids, dtype=torch.bool)
+            set_batch_size_offset(inference_cache, row)
+            output = model.forward(input_ids, mask=mask, inference_params=inference_cache)
+            logits[row] = output.logits[0, -1, :]
+    set_batch_size_offset(inference_cache, 0)
+
+    generated_tokens: list[list[int]] = [[] for _ in range(batch_size)]
+    finished = [False for _ in range(batch_size)]
+
+    for _ in range(max_tokens):
+        if all(finished):
+            break
+
+        next_token_ids: list[int] = []
+        for index in range(batch_size):
+            if finished[index]:
+                next_token_ids.append(eos_id)
+                continue
+
+            next_token_id = sample_next_token(
+                logits[index], temperature=temperature, top_p=top_p
+            )
+            next_token_ids.append(next_token_id)
+
+            if next_token_id == eos_id:
+                finished[index] = True
+                continue
+
+            generated_tokens[index].append(next_token_id)
+
+        if all(finished):
+            break
+
+        current_tokens = torch.tensor(
+            next_token_ids, dtype=torch.long, device=device
+        ).unsqueeze(1)
+        with torch.inference_mode():
+            output = model.step(current_tokens, inference_cache)
+        logits = output.logits[:, -1, :]
+
+    return generated_tokens
+
+
 def generate(
     model,
     prompt: str,
@@ -99,60 +208,14 @@ def generate(
     Yields:
         Generated token ids (byte values) one by one
     """
-    device = next(model.parameters()).device
-    inference_dtype = next(model.parameters()).dtype
-    tokenizer = ByteTokenizer()
-    encoded = tokenizer.encode([prompt], add_bos=True)[0]
-    input_ids = torch.tensor(
-        encoded["input_ids"], dtype=torch.long, device=device
-    ).unsqueeze(0)
-
-    inference_cache = model.allocate_inference_cache(
-        1, input_ids.shape[1] + max_tokens, dtype=inference_dtype
-    )
-
-    with torch.inference_mode():
-        mask = torch.ones(input_ids.shape, device=device, dtype=torch.bool)
-        output = model.forward(input_ids, mask=mask, inference_params=inference_cache)
-
-    is_greedy = temperature <= 0.0
-    logits = output.logits[0, -1, :]
-    if not is_greedy:
-        logits = logits / temperature
-
-    for _ in range(max_tokens):
-        if is_greedy:
-            next_token = torch.argmax(logits, dim=-1, keepdim=True)
-        else:
-            sampled_logits = logits.clone()
-            if top_p < 1.0:
-                sorted_logits, sorted_indices = torch.sort(sampled_logits, descending=True)
-                cumulative_probs = torch.cumsum(
-                    torch.softmax(sorted_logits, dim=-1), dim=-1
-                )
-
-                sorted_indices_to_remove = cumulative_probs > top_p
-                sorted_indices_to_remove[1:] = sorted_indices_to_remove[:-1].clone()
-                sorted_indices_to_remove[0] = 0
-
-                indices_to_remove = sorted_indices[sorted_indices_to_remove]
-                sampled_logits[indices_to_remove] = -float("inf")
-
-            probs = torch.softmax(sampled_logits, dim=-1)
-            next_token = torch.multinomial(probs, 1)
-
-        if next_token.item() == tokenizer.eos_idx:
-            break
-
-        current_token = next_token.unsqueeze(0)
-        yield int(next_token.item())
-
-        with torch.inference_mode():
-            output = model.step(current_token, inference_cache)
-
-        logits = output.logits[0, -1, :]
-        if not is_greedy:
-            logits = logits / temperature
+    for token_id in generate_batch_tokens(
+        model=model,
+        prompts=[prompt],
+        max_tokens=max_tokens,
+        temperature=temperature,
+        top_p=top_p,
+    )[0]:
+        yield token_id
 
 
 def stream_generate_and_print(
@@ -222,6 +285,12 @@ def main():
         choices=["auto", "bf16", "fp16", "fp32"],
         help="Inference dtype (default: auto)",
     )
+    parser.add_argument(
+        "--batch-size",
+        type=int,
+        default=1,
+        help="Batch size used when multiple --prompt are provided (default: 1)",
+    )
     args = parser.parse_args()
 
     print("Loading model...")
@@ -235,23 +304,50 @@ def main():
         sys.exit(1)
 
     if args.prompts:
-        for index, prompt in enumerate(args.prompts, start=1):
-            prompt = prompt.strip()
-            if not prompt:
-                continue
+        valid_prompts = [prompt.strip() for prompt in args.prompts if prompt.strip()]
+        if args.batch_size <= 1:
+            for index, prompt in enumerate(valid_prompts, start=1):
+                print(
+                    f"\n[{index}/{len(valid_prompts)}] Generating "
+                    f"(max_tokens={args.max_tokens}, temperature={args.temperature}, top_p={args.top_p})"
+                )
+                stream_generate_and_print(
+                    model,
+                    prompt,
+                    max_tokens=args.max_tokens,
+                    temperature=args.temperature,
+                    top_p=args.top_p,
+                )
+                print()
+            return
 
-            print(
-                f"\n[{index}/{len(args.prompts)}] Generating "
-                f"(max_tokens={args.max_tokens}, temperature={args.temperature}, top_p={args.top_p})"
-            )
-            stream_generate_and_print(
-                model,
-                prompt,
+        decoder_factory = lambda: codecs.getincrementaldecoder("utf-8")(errors="replace")
+        total = len(valid_prompts)
+        for chunk_start in range(0, total, args.batch_size):
+            chunk_prompts = valid_prompts[chunk_start : chunk_start + args.batch_size]
+            tokens_list = generate_batch_tokens(
+                model=model,
+                prompts=chunk_prompts,
                 max_tokens=args.max_tokens,
                 temperature=args.temperature,
                 top_p=args.top_p,
             )
-            print()
+            for local_idx, (prompt, tokens) in enumerate(zip(chunk_prompts, tokens_list), start=1):
+                global_idx = chunk_start + local_idx
+                print(
+                    f"\n[{global_idx}/{total}] Generating "
+                    f"(max_tokens={args.max_tokens}, temperature={args.temperature}, top_p={args.top_p})"
+                )
+                print(f"\033[92m{prompt}\033[0m", end="")
+                decoder = decoder_factory()
+                for token_id in tokens:
+                    chunk = decoder.decode(bytes([token_id]), final=False)
+                    if chunk:
+                        print(chunk, end="", flush=True)
+                tail = decoder.decode(b"", final=True)
+                if tail:
+                    print(tail, end="", flush=True)
+                print()
         return
 
     while True:

@@ -137,11 +137,6 @@ class HNetForCausalLM(nn.Module, GenerationMixin):
         )
 
     def step(self, input_ids, inference_params):
-        B = input_ids.shape[0]
-        assert (
-            B == 1
-        ), "HNetForCausalLM step currently only supports batch size 1 -- need to handle different-size lengths for each sample"
-
         hidden_states = self.embeddings(input_ids)
 
         hidden_states, bpred_output = self.backbone.step(

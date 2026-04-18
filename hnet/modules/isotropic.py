@@ -33,6 +33,7 @@ class IsotropicInferenceParams:
         self.max_seqlen = max_seqlen
         self.max_batch_size = max_batch_size
         self.seqlen_offset = 0
+        self.batch_size_offset = 0
         if self.lengths_per_sample is not None:
             self.lengths_per_sample.zero_()
 
@@ -117,6 +118,11 @@ class Isotropic(nn.Module):
             key_value_memory_dict=key_value_memory_dict,
             max_seqlen=max_seqlen,
             max_batch_size=batch_size,
+            lengths_per_sample=torch.zeros(
+                batch_size,
+                device=self.rmsnorm.weight.device,
+                dtype=torch.int32,
+            ),
         )
 
     def forward(
@@ -180,9 +186,27 @@ class Isotropic(nn.Module):
             hidden_states = hidden_states.squeeze(0)
 
         if inference_params is not None:
-            # here we also explicitly assume the mask is all True
-            assert mask.shape[0] == 1, "seqlen_offset handling assumes batch size 1"
-            inference_params.seqlen_offset += hidden_states.shape[1]
+            if inference_params.lengths_per_sample is not None:
+                assert (
+                    mask is not None
+                ), "Mask must be provided when lengths_per_sample is used"
+                batch_start = inference_params.batch_size_offset
+                batch_end = batch_start + mask.shape[0]
+                lengths_delta = mask.sum(dim=-1).to(
+                    dtype=inference_params.lengths_per_sample.dtype
+                )
+                inference_params.lengths_per_sample[batch_start:batch_end].add_(
+                    lengths_delta
+                )
+                inference_params.seqlen_offset = int(
+                    inference_params.lengths_per_sample.max().item()
+                )
+            else:
+                # Legacy single-sequence behavior
+                assert (
+                    mask.shape[0] == 1
+                ), "seqlen_offset handling assumes batch size 1 without lengths_per_sample"
+                inference_params.seqlen_offset += hidden_states.shape[1]
 
         return hidden_states
 
@@ -199,6 +223,14 @@ class Isotropic(nn.Module):
         hidden_states = self.rmsnorm(
             hidden_states, residual=residual, prenorm=False, residual_in_fp32=True
         )
-        inference_params.seqlen_offset += 1
+        if inference_params.lengths_per_sample is not None:
+            batch_start = inference_params.batch_size_offset
+            batch_end = batch_start + hidden_states.shape[0]
+            inference_params.lengths_per_sample[batch_start:batch_end].add_(1)
+            inference_params.seqlen_offset = int(
+                inference_params.lengths_per_sample.max().item()
+            )
+        else:
+            inference_params.seqlen_offset += 1
 
         return hidden_states

@@ -75,6 +75,22 @@ def sample_next_token(logits, temperature: float, top_p: float) -> int:
     return int(torch.multinomial(probs, 1).item())
 
 
+def set_batch_size_offset(inference_params: Any, offset: int) -> None:
+    if inference_params is None:
+        return
+    if hasattr(inference_params, "batch_size_offset"):
+        inference_params.batch_size_offset = offset
+    for attr_name in (
+        "encoder_state",
+        "routing_module_state",
+        "main_network_state",
+        "dechunk_state",
+        "decoder_state",
+    ):
+        if hasattr(inference_params, attr_name):
+            set_batch_size_offset(getattr(inference_params, attr_name), offset)
+
+
 def generate_batch(model, tasks: list[GenerationTask]) -> None:
     if not tasks:
         return
@@ -83,12 +99,26 @@ def generate_batch(model, tasks: list[GenerationTask]) -> None:
     device = next(model.parameters()).device
     eos_id = tokenizer.eos_idx
 
-    sequences = [
-        list(tokenizer.encode([task.prompt], add_bos=True)[0]["input_ids"])
-        for task in tasks
-    ]
-    batch_size = len(sequences)
+    sequences = [list(tokenizer.encode([task.prompt], add_bos=True)[0]["input_ids"]) for task in tasks]
+    prompt_lengths = [len(seq) for seq in sequences]
+    batch_size = len(tasks)
+    max_prompt_len = max(prompt_lengths)
     max_new_tokens = max(task.max_tokens for task in tasks)
+    inference_dtype = next(model.parameters()).dtype
+    inference_cache = model.allocate_inference_cache(
+        batch_size, max_prompt_len + max_new_tokens, dtype=inference_dtype
+    )
+
+    logits = torch.empty((batch_size, tokenizer.vocab_size), device=device, dtype=inference_dtype)
+    with torch.inference_mode():
+        for row, seq in enumerate(sequences):
+            input_ids = torch.tensor(seq, dtype=torch.long, device=device).unsqueeze(0)
+            mask = torch.ones_like(input_ids, dtype=torch.bool, device=device)
+            set_batch_size_offset(inference_cache, row)
+            output = model.forward(input_ids, mask=mask, inference_params=inference_cache)
+            logits[row] = output.logits[0, -1, :]
+
+    set_batch_size_offset(inference_cache, 0)
 
     decoders = [
         codecs.getincrementaldecoder("utf-8")(errors="replace")
@@ -102,34 +132,16 @@ def generate_batch(model, tasks: list[GenerationTask]) -> None:
         if all(finished):
             break
 
-        lengths = [len(seq) for seq in sequences]
-        max_len = max(lengths)
-        input_ids = torch.full(
-            (batch_size, max_len),
-            fill_value=eos_id,
-            dtype=torch.long,
-            device=device,
-        )
-        mask = torch.zeros((batch_size, max_len), dtype=torch.bool, device=device)
-        for row, seq in enumerate(sequences):
-            seq_tensor = torch.tensor(seq, dtype=torch.long, device=device)
-            input_ids[row, : seq_tensor.numel()] = seq_tensor
-            mask[row, : seq_tensor.numel()] = True
-
-        with torch.inference_mode():
-            output = model.forward(input_ids, mask=mask)
-
-        row_indices = torch.arange(batch_size, device=device)
-        last_positions = torch.tensor(lengths, dtype=torch.long, device=device) - 1
-        logits = output.logits[row_indices, last_positions, :]
-
+        next_token_ids: list[int] = []
         for index, task in enumerate(tasks):
             if finished[index]:
+                next_token_ids.append(eos_id)
                 continue
 
             next_token_id = sample_next_token(
                 logits[index], temperature=task.temperature, top_p=task.top_p
             )
+            next_token_ids.append(next_token_id)
 
             if next_token_id == eos_id:
                 finished[index] = True
@@ -144,6 +156,16 @@ def generate_batch(model, tasks: list[GenerationTask]) -> None:
 
             if generated_count[index] >= task.max_tokens:
                 finished[index] = True
+
+        if all(finished):
+            break
+
+        current_tokens = torch.tensor(
+            next_token_ids, dtype=torch.long, device=device
+        ).unsqueeze(1)
+        with torch.inference_mode():
+            output = model.step(current_tokens, inference_cache)
+        logits = output.logits[:, -1, :]
 
     for index, task in enumerate(tasks):
         tail = decoders[index].decode(b"", final=True)

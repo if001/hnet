@@ -7,7 +7,12 @@ import torch
 import torch.nn.functional as F
 from torch.optim import AdamW
 from torch.utils.data import IterableDataset
-from transformers import AutoTokenizer, PreTrainedTokenizerBase, Trainer, TrainingArguments
+from transformers import (
+    AutoTokenizer,
+    PreTrainedTokenizerBase,
+    Trainer,
+    TrainingArguments,
+)
 
 from hnet.models import HNetForCausalLM
 from hnet.utils.tokenizers import ByteTokenizer
@@ -21,7 +26,7 @@ class SFTTrainConfig:
     model_config_path: str
     pretrained_model_path: str
     output_dir: str = "artifacts/hnet_sft"
-    chat_tokenizer_path: str = "Qwen/Qwen3-0.6B-Instruct"
+    chat_tokenizer_path: str = "Qwen/Qwen3-0.6B"
 
     seq_len: int = 512
     batch_size: int = 2
@@ -92,9 +97,7 @@ class StreamingSFTByteDataset(IterableDataset):
         token_buffer: list[int] = []
 
         for text in self._iter_texts():
-            encoded = self.byte_tokenizer.encode(
-                [text], add_bos=True, add_eos=True
-            )[0][
+            encoded = self.byte_tokenizer.encode([text], add_bos=True, add_eos=True)[0][
                 "input_ids"
             ].tolist()
             token_buffer.extend(encoded)

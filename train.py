@@ -41,6 +41,12 @@ def parse_args() -> TrainingConfig:
         dest="validation_datasets",
         help="Validation dataset name. Repeat to specify multiple datasets.",
     )
+    parser.add_argument(
+        "--chunk-prompt",
+        action="append",
+        dest="chunk_prompts",
+        help="Prompt text for chunk inspection saved during validation. Repeat to specify multiple prompts.",
+    )
     parser.add_argument("--seq-len", type=int, default=512)
     parser.add_argument("--batch-size", type=int, default=2)
     parser.add_argument("--grad-accum-steps", type=int, default=8)
@@ -99,6 +105,7 @@ def parse_args() -> TrainingConfig:
         output_dir=args.output_dir,
         datasets=datasets,
         validation_datasets=validation_datasets,
+        chunk_prompts=[p for p in (args.chunk_prompts or []) if p.strip()],
         seq_len=args.seq_len,
         batch_size=args.batch_size,
         grad_accum_steps=args.grad_accum_steps,

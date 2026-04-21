@@ -21,6 +21,7 @@ class TrainingConfig:
         ]
     )
     validation_datasets: list[DatasetSource] | None = None
+    chunk_prompts: list[str] = field(default_factory=list)
     seq_len: int = 512
     batch_size: int = 2
     grad_accum_steps: int = 8

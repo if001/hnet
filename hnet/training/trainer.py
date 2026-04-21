@@ -16,6 +16,7 @@ from torch.utils.data import DataLoader
 from ..models.config_hnet import HNetConfig
 from ..models.config_io import load_hnet_config, save_hnet_config
 from ..models.mixer_seq import HNetForCausalLM
+from .chunking_utils import format_stage_compact, inspect_prompt_chunks
 from ..utils.train import group_params, load_balancing_loss
 from .config import DatasetSource, TrainingConfig
 from .data import DefaultRecordFormatter, StreamingByteDataset
@@ -346,6 +347,34 @@ def _format_boundary_positions(mask: torch.Tensor, limit: int = 64) -> str:
     if len(indices) > limit:
         text += "|..."
     return text
+
+
+@torch.no_grad()
+def save_validation_chunk_reports(
+    model: HNetForCausalLM,
+    prompts: list[str],
+    output_dir: Path,
+    step: int,
+) -> Path | None:
+    valid_prompts = [prompt for prompt in prompts if prompt and prompt.strip()]
+    if not valid_prompts:
+        return None
+
+    lines: list[str] = []
+    for index, prompt in enumerate(valid_prompts, start=1):
+        info = inspect_prompt_chunks(model, prompt, add_bos=True)
+        lines.append(f"[{index}/{len(valid_prompts)}]")
+        lines.append(f"Input prompt: {prompt}")
+        lines.append(f"stage0: {format_stage_compact(info['stage0_chunks'])}")
+        lines.append(f"stage1: {format_stage_compact(info['stage1_chunks'])}")
+        if index < len(valid_prompts):
+            lines.append("")
+
+    chunk_dir = output_dir / "validation_chunks"
+    chunk_dir.mkdir(parents=True, exist_ok=True)
+    save_path = chunk_dir / f"chunks_step_{step:06d}.txt"
+    save_path.write_text("\n".join(lines) + "\n", encoding="utf-8")
+    return save_path
 
 
 @torch.no_grad()
@@ -790,6 +819,15 @@ def train(training_config: TrainingConfig) -> None:
                     validation_metrics["stage0_target_ratio_gap"],
                     validation_metrics["stage1_target_ratio_gap"],
                 )
+
+            chunk_report_path = save_validation_chunk_reports(
+                model=model,
+                prompts=training_config.chunk_prompts,
+                output_dir=output_dir,
+                step=completed_steps,
+            )
+            if chunk_report_path is not None:
+                logger.info("saved_validation_chunks=%s", chunk_report_path)
 
         if completed_steps % training_config.save_every == 0:
             checkpoint_path = save_checkpoint(

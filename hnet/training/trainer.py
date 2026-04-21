@@ -22,6 +22,10 @@ from .config import DatasetSource, TrainingConfig
 from .data import DefaultRecordFormatter, StreamingByteDataset
 
 
+torch.backends.cuda.matmul.allow_tf32 = True
+torch.backends.cudnn.allow_tf32 = True
+
+
 class TrainingMetricsLogger:
     fieldnames = ["step", "learning_rate", "ce_loss", "ratio_loss", "total_loss"]
 
@@ -654,8 +658,7 @@ def train(training_config: TrainingConfig) -> None:
     completed_steps = 0
 
     while (
-        training_config.max_steps is None
-        or completed_steps < training_config.max_steps
+        training_config.max_steps is None or completed_steps < training_config.max_steps
     ):
         optimizer.zero_grad(set_to_none=True)
         ce_loss_value = 0.0

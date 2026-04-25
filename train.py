@@ -1,6 +1,6 @@
 import argparse
 import math
-
+import numpy as np
 import hnet.training.dataset_template as dataset_template
 from hnet.models import load_hnet_config
 from hnet.training import DatasetSource, TrainingConfig, train
@@ -17,12 +17,13 @@ def compute_default_lr_multipliers(
     n_gpt: float = 4.6,
 ) -> list[float]:
     # https://arxiv.org/pdf/2507.07955#page=35
-    n_prod_ratio = compression_ratios[::-1]
-    d_ratio = [d_model[-1] / d for d in d_model]
-    return [
-        math.sqrt(n_gpt * n_frac * d_frac)
-        for n_frac, d_frac in zip(n_prod_ratio, d_ratio)
-    ]
+
+    multipliers = []
+    for i in range(len(compression_ratios)):
+        d1 = np.prod(compression_ratios[i:]) / np.prod(compression_ratios)
+        d2 = d_model[-1] / d_model[i]
+        multipliers.append(math.sqrt(n_gpt * d1 * d2))
+    return multipliers
 
 
 def parse_args() -> TrainingConfig:
@@ -103,10 +104,12 @@ def parse_args() -> TrainingConfig:
         lr_multipliers = args.lr_multipliers
     else:
         model_config = load_hnet_config(args.model_config_path)
+        _comp = compression_ratios + [1]
         lr_multipliers = compute_default_lr_multipliers(
-            compression_ratios=compression_ratios,
+            compression_ratios=_comp,
             d_model=model_config.d_model,
         )
+        print("auto calc lr_multipliers", lr_multipliers)
 
     if args.datasets:
         datasets = [DatasetSource(name=name) for name in args.datasets]

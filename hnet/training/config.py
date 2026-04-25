@@ -42,3 +42,7 @@ class TrainingConfig:
     seed: int = 42
     num_workers: int = 0
     shuffle_buffer_size: int = 512
+    resume_from_checkpoint: str | None = None
+    resume_optimizer: bool = True
+    resume_step: bool = True
+    rope_scaling: dict[str, float | int | str] | None = None

@@ -96,6 +96,46 @@ def parse_args() -> TrainingConfig:
     parser.add_argument("--seed", type=int, default=42)
     parser.add_argument("--num-workers", type=int, default=0)
     parser.add_argument("--shuffle-buffer-size", type=int, default=512)
+    parser.add_argument(
+        "--resume-from-checkpoint",
+        type=str,
+        default=None,
+        help="Path to checkpoint (.pt) to resume continued pretraining.",
+    )
+    parser.add_argument(
+        "--no-resume-optimizer",
+        action="store_true",
+        help="Do not load optimizer state when resuming.",
+    )
+    parser.add_argument(
+        "--no-resume-step",
+        action="store_true",
+        help="Do not restore step counter from checkpoint when resuming.",
+    )
+    parser.add_argument(
+        "--rope-type",
+        type=str,
+        choices=["yarn"],
+        help="Enable rope scaling type for attention (currently: yarn).",
+    )
+    parser.add_argument(
+        "--rope-factor",
+        type=float,
+        help="RoPE scaling factor (e.g. 2.0, 4.0).",
+    )
+    parser.add_argument(
+        "--rope-original-max-position-embeddings",
+        type=int,
+        help="Original pretraining context length for static YaRN.",
+    )
+    parser.add_argument(
+        "--rope-attention-factor",
+        type=float,
+        default=None,
+        help="Optional YaRN attention factor override.",
+    )
+    parser.add_argument("--rope-beta-fast", type=float, default=32.0)
+    parser.add_argument("--rope-beta-slow", type=float, default=1.0)
     args = parser.parse_args()
 
     compression_ratios = args.compression_ratios or [4.0]
@@ -122,6 +162,20 @@ def parse_args() -> TrainingConfig:
         ]
 
     validation_datasets = None
+    rope_scaling = None
+    if args.rope_type is not None:
+        if args.rope_factor is None or args.rope_original_max_position_embeddings is None:
+            raise ValueError("--rope-type requires --rope-factor and --rope-original-max-position-embeddings")
+        rope_scaling = {
+            "rope_type": args.rope_type,
+            "factor": args.rope_factor,
+            "original_max_position_embeddings": args.rope_original_max_position_embeddings,
+            "beta_fast": args.rope_beta_fast,
+            "beta_slow": args.rope_beta_slow,
+        }
+        if args.rope_attention_factor is not None:
+            rope_scaling["attention_factor"] = args.rope_attention_factor
+
     if args.validation_datasets:
         validation_datasets = [
             DatasetSource(name=name) for name in args.validation_datasets
@@ -153,6 +207,10 @@ def parse_args() -> TrainingConfig:
         seed=args.seed,
         num_workers=args.num_workers,
         shuffle_buffer_size=args.shuffle_buffer_size,
+        resume_from_checkpoint=args.resume_from_checkpoint,
+        resume_optimizer=not args.no_resume_optimizer,
+        resume_step=not args.no_resume_step,
+        rope_scaling=rope_scaling,
     )
 
 

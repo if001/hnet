@@ -240,8 +240,7 @@ SOURCES_JA8_EN1_CODE1_20: list[DatasetSource] = [
         skip_examples=78_000,
     ),
     DatasetSource(
-        name="wikimedia/wikipedia",
-        config_name="20231101.ja",
+        name="if001/wikimedia_ja_short",
         split="train",
         take_examples=240_000,
         skip_examples=12_000,
@@ -254,8 +253,7 @@ SOURCES_JA8_EN1_CODE1_20: list[DatasetSource] = [
         skip_examples=10_000,  ## 先頭10000件スキップが推奨
     ),
     DatasetSource(
-        name="wikimedia/wikipedia",
-        config_name="20231101.en",
+        name="if001/wikimedia_en_short",
         split="train",
         take_examples=40_000,
         skip_examples=2_000,
@@ -420,10 +418,9 @@ SOURCES_JA8_EN1_CODE1_200: list[DatasetSource] = [
         skip_examples=78_000,  ## 先頭10000件スキップが推奨
     ),
     DatasetSource(
-        name="wikimedia/wikipedia",
-        config_name="20231101.ja",
+        name="if001/wikimedia_ja_short",
         split="train",
-        take_examples=120_000 * 20,  # max: 1_390_000
+        take_examples=120_000 * 20,  # max: 1_380_000
         skip_examples=12_000,
     ),
     DatasetSource(
@@ -433,8 +430,7 @@ SOURCES_JA8_EN1_CODE1_200: list[DatasetSource] = [
         take_examples=80_000 * 20,
     ),
     DatasetSource(
-        name="wikimedia/wikipedia",
-        config_name="20231101.en",
+        name="if001/wikimedia_en_short",
         split="train",
         take_examples=20_000 * 20,
         skip_examples=2_000,
@@ -448,6 +444,45 @@ SOURCES_JA8_EN1_CODE1_200: list[DatasetSource] = [
     DatasetSource(
         name="if001/aozorabunko-clean-sin",
         split="train",
+        take_examples=1_000,
+    ),
+]
+
+
+## long
+SOURCES_JA8_EN1_CODE1_SMALL_LONG: list[DatasetSource] = [
+    DatasetSource(
+        name="hotchpotch/fineweb-2-edu-japanese",
+        config_name="small_tokens_cleaned",
+        split="train",
+        take_examples=68_000,
+        skip_examples=10_000,  ## 先頭10000件スキップが推奨
+    ),
+    DatasetSource(
+        name="if001/wikimedia_ja_long",
+        split="train",
+        take_examples=4_000,
+    ),
+    DatasetSource(
+        name="HuggingFaceFW/fineweb-edu",
+        config_name="sample-10BT",
+        split="train",
+        take_examples=8_000,
+    ),
+    DatasetSource(
+        name="if001/wikimedia_en_long",
+        split="train",
+        take_examples=2_000,
+    ),
+    DatasetSource(
+        name="codeparrot/codeparrot-clean",
+        split="train",
+        take_examples=10_000,
+    ),
+    DatasetSource(
+        name="if001/aozorabunko-clean-sin",
+        split="train",
+        skip_examples=1_000,
         take_examples=10_000,
     ),
 ]

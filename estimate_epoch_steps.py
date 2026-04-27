@@ -61,11 +61,17 @@ def main() -> None:
         formatter=DefaultRecordFormatter(),
         shuffle_buffer_size=args.shuffle_buffer_size,
     )
+    dataloader_kwargs: dict[str, object] = {}
+    if args.num_workers > 0:
+        dataloader_kwargs["persistent_workers"] = True
+        dataloader_kwargs["prefetch_factor"] = 2
+
     dataloader = DataLoader(
         dataset,
         batch_size=args.batch_size,
         num_workers=args.num_workers,
         pin_memory=torch.cuda.is_available(),
+        **dataloader_kwargs,
     )
 
     print("estimating_epoch_steps=true")

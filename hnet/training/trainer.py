@@ -170,11 +170,17 @@ def create_dataloader(
         shuffle_buffer_size=training_config.shuffle_buffer_size,
         shuffle=shuffle,
     )
+    dataloader_kwargs: dict[str, object] = {}
+    if training_config.num_workers > 0:
+        dataloader_kwargs["persistent_workers"] = True
+        dataloader_kwargs["prefetch_factor"] = 2
+
     return DataLoader(
         dataset,
         batch_size=training_config.batch_size,
         num_workers=training_config.num_workers,
         pin_memory=torch.cuda.is_available(),
+        **dataloader_kwargs,
     )
 
 

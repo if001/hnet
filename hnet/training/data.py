@@ -6,6 +6,7 @@ from typing import Protocol
 import torch
 from datasets import IterableDataset as HFIterableDataset
 from datasets import concatenate_datasets, load_dataset
+from torch.utils.data import get_worker_info
 
 from ..utils.tokenizers import ByteTokenizer
 from .config import DatasetSource
@@ -84,7 +85,6 @@ def _stringify_sequence(value: Sequence[object]) -> str:
     return "\n".join(part for part in parts if part)
 
 
-
 def _stringify_value(value: object) -> str:
     if isinstance(value, (str, int, float, bool)) or value is None:
         return _stringify_scalar(value)
@@ -126,8 +126,6 @@ class DefaultRecordFormatter:
 
 def _load_streaming_source(
     source: DatasetSource,
-    shuffle_buffer_size: int,
-    shuffle: bool,
 ) -> HFIterableDataset:
     dataset = load_dataset(
         source.name,
@@ -141,9 +139,6 @@ def _load_streaming_source(
 
     if source.take_examples > 0:
         dataset = dataset.take(source.take_examples)
-
-    if shuffle:
-        return dataset.shuffle(buffer_size=shuffle_buffer_size, seed=42)
     return dataset
 
 
@@ -169,15 +164,22 @@ class StreamingByteDataset(torch.utils.data.IterableDataset):
         self.shuffle = shuffle
 
     def _iter_stream(self) -> Iterable[Mapping[str, object]]:
+        worker = get_worker_info()
+        worker_id = worker.id if worker is not None else 0
+        num_workers = worker.num_workers if worker is not None else 1
+
         datasets = [
-            _load_streaming_source(
-                source, self.shuffle_buffer_size, shuffle=self.shuffle
-            )
+            _load_streaming_source(source)
             for source in self.sources
         ]
         if len(datasets) == 1:
-            return datasets[0]
-        merged = concatenate_datasets(datasets)
+            merged = datasets[0]
+        else:
+            merged = concatenate_datasets(datasets)
+
+        if num_workers > 1 and hasattr(merged, "shard"):
+            merged = merged.shard(num_shards=num_workers, index=worker_id)
+
         if self.shuffle:
             return merged.shuffle(buffer_size=self.shuffle_buffer_size, seed=42)
         return merged

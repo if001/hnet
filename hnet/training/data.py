@@ -1,4 +1,5 @@
 import json
+import logging
 from collections.abc import Iterable, Iterator, Mapping, Sequence
 from dataclasses import dataclass
 from typing import Protocol
@@ -27,6 +28,7 @@ PREFERRED_TEXT_KEYS = (
     "context",
     "title",
 )
+logger = logging.getLogger(__name__)
 
 
 class RecordFormatter(Protocol):
@@ -178,7 +180,16 @@ class StreamingByteDataset(torch.utils.data.IterableDataset):
             merged = concatenate_datasets(datasets)
 
         if num_workers > 1 and hasattr(merged, "shard"):
-            merged = merged.shard(num_shards=num_workers, index=worker_id)
+            try:
+                merged = merged.shard(num_shards=num_workers, index=worker_id)
+            except Exception as exc:  # pragma: no cover - runtime backend dependent
+                logger.warning(
+                    "Failed to shard iterable dataset for worker=%d/%d: %s. "
+                    "Falling back to unsharded stream.",
+                    worker_id,
+                    num_workers,
+                    exc,
+                )
 
         if self.shuffle:
             return merged.shuffle(buffer_size=self.shuffle_buffer_size, seed=42)

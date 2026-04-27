@@ -162,7 +162,11 @@ def create_dataloader(
     training_config: TrainingConfig,
     sources: list[DatasetSource] | None = None,
     shuffle: bool = True,
+    num_workers: int | None = None,
 ) -> DataLoader[dict[str, torch.Tensor]]:
+    effective_num_workers = (
+        training_config.num_workers if num_workers is None else num_workers
+    )
     dataset = StreamingByteDataset(
         sources=sources or training_config.datasets,
         seq_len=training_config.seq_len,
@@ -171,14 +175,14 @@ def create_dataloader(
         shuffle=shuffle,
     )
     dataloader_kwargs: dict[str, object] = {}
-    if training_config.num_workers > 0:
+    if effective_num_workers > 0:
         dataloader_kwargs["persistent_workers"] = True
         dataloader_kwargs["prefetch_factor"] = 2
 
     return DataLoader(
         dataset,
         batch_size=training_config.batch_size,
-        num_workers=training_config.num_workers,
+        num_workers=effective_num_workers,
         pin_memory=torch.cuda.is_available(),
         **dataloader_kwargs,
     )
@@ -711,6 +715,7 @@ def train(training_config: TrainingConfig) -> None:
         training_config,
         sources=validation_sources,
         shuffle=False,
+        num_workers=0,
     )
     validation_batches = build_cached_validation_batches(
         validation_dataloader,

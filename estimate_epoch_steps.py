@@ -9,7 +9,7 @@ import hnet.training.dataset_template as dataset_template
 from hnet.training import DatasetSource
 from hnet.training.data import (
     DefaultRecordFormatter,
-    PackedByteDataset,
+    PackedMixByteDataset,
     StreamingByteDataset,
     compute_packed_total_tokens,
 )
@@ -45,7 +45,7 @@ def parse_args() -> argparse.Namespace:
         "--packed-data-dir",
         type=str,
         default=None,
-        help="Path to packed dataset dir (data.bin / metadata.json).",
+        help="Path to packed dataset dir (mix_manifest.json + dataset shard files).",
     )
     parser.add_argument("--log-every", type=int, default=200)
     return parser.parse_args()
@@ -66,9 +66,10 @@ def main() -> None:
     args = parse_args()
     if args.packed_data_dir is not None:
         sources: list[DatasetSource] = []
-        dataset = PackedByteDataset(
+        dataset = PackedMixByteDataset(
             packed_dir=args.packed_data_dir,
             seq_len=args.seq_len,
+            shuffle=False,
         )
     else:
         sources = resolve_datasets(args)

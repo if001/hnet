@@ -1,5 +1,6 @@
 import json
 import logging
+import random
 from collections.abc import Iterable, Iterator, Mapping, Sequence
 from dataclasses import dataclass
 from pathlib import Path
@@ -225,74 +226,140 @@ class StreamingByteDataset(torch.utils.data.IterableDataset):
                 }
 
 
-def _resolve_packed_paths(packed_dir: str | Path) -> tuple[Path, Path]:
+def load_mix_manifest(packed_dir: str | Path) -> dict[str, object]:
     base = Path(packed_dir)
-    data_path = base / "data.bin"
-    metadata_path = base / "metadata.json"
-    return data_path, metadata_path
-
-
-def load_packed_metadata(packed_dir: str | Path) -> dict[str, object]:
-    _data_path, metadata_path = _resolve_packed_paths(packed_dir)
-    if not metadata_path.exists():
-        raise FileNotFoundError(f"metadata.json not found under {packed_dir}")
-    return json.loads(metadata_path.read_text(encoding="utf-8"))
+    mix_path = base / "mix_manifest.json"
+    if not mix_path.exists():
+        raise FileNotFoundError(f"mix_manifest.json not found under {packed_dir}")
+    return json.loads(mix_path.read_text(encoding="utf-8"))
 
 
 def compute_packed_total_tokens(packed_dir: str | Path) -> int:
-    data_path, _metadata_path = _resolve_packed_paths(packed_dir)
-    if not data_path.exists():
-        raise FileNotFoundError(f"data.bin not found under {packed_dir}")
-    return data_path.stat().st_size
+    base = Path(packed_dir)
+    mix = load_mix_manifest(base)
+    return int(mix.get("total_tokens", 0))
 
 
-class PackedByteDataset(torch.utils.data.Dataset):
+@dataclass(frozen=True)
+class PackedShard:
+    dataset_name: str
+    bin_path: Path
+    token_count: int
+
+    @property
+    def chunk_count(self) -> int:
+        return self.token_count
+
+
+def _load_shards_from_mix_manifest(packed_dir: str | Path) -> list[PackedShard]:
+    base = Path(packed_dir)
+    mix = load_mix_manifest(base)
+    datasets = mix.get("datasets")
+    if not isinstance(datasets, list):
+        raise ValueError("Invalid mix_manifest.json: datasets must be a list")
+
+    shards: list[PackedShard] = []
+    for dataset_entry in datasets:
+        if not isinstance(dataset_entry, Mapping):
+            continue
+        dataset_name = str(dataset_entry.get("name", "dataset"))
+        manifest_rel = dataset_entry.get("manifest")
+        if not isinstance(manifest_rel, str):
+            continue
+        manifest_path = base / manifest_rel
+        source_manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+        source_dir = manifest_path.parent
+        source_shards = source_manifest.get("shards", [])
+        if not isinstance(source_shards, list):
+            continue
+        for shard in source_shards:
+            if not isinstance(shard, Mapping):
+                continue
+            bin_file = shard.get("bin_file")
+            token_count = shard.get("token_count")
+            if not isinstance(bin_file, str) or not isinstance(token_count, int):
+                continue
+            bin_path = source_dir / bin_file
+            shards.append(
+                PackedShard(
+                    dataset_name=dataset_name,
+                    bin_path=bin_path,
+                    token_count=int(token_count),
+                )
+            )
+    return shards
+
+
+def list_packed_shards(packed_dir: str | Path) -> list[PackedShard]:
+    return _load_shards_from_mix_manifest(Path(packed_dir))
+
+
+class PackedMixByteDataset(torch.utils.data.IterableDataset):
     def __init__(
         self,
         packed_dir: str | Path,
         seq_len: int,
-        sample_start: int = 0,
-        sample_end: int | None = None,
+        shuffle: bool = True,
+        seed: int = 42,
+        shard_indices: Sequence[int] | None = None,
     ) -> None:
         super().__init__()
+        self.packed_dir = Path(packed_dir)
         self.seq_len = seq_len
         self.stride = seq_len + 1
-
-        data_path, _metadata_path = _resolve_packed_paths(packed_dir)
-        if not data_path.exists():
-            raise FileNotFoundError(f"data.bin not found under {packed_dir}")
-
-        self._tokens = np.memmap(data_path, mode="r", dtype=np.uint8)
-        total_tokens = int(self._tokens.shape[0])
-        total_samples = total_tokens // self.stride
-
-        if sample_end is None:
-            sample_end = total_samples
-        sample_start = max(0, sample_start)
-        sample_end = min(total_samples, sample_end)
-        if sample_end < sample_start:
-            sample_end = sample_start
-
-        self.sample_start = sample_start
-        self.sample_end = sample_end
-        self.num_samples = self.sample_end - self.sample_start
+        self.shuffle = shuffle
+        self.seed = seed
         self._mask = torch.ones(self.seq_len, dtype=torch.bool)
 
+        all_shards = list_packed_shards(self.packed_dir)
+        if shard_indices is not None:
+            self.shards = [
+                all_shards[i] for i in shard_indices if 0 <= int(i) < len(all_shards)
+            ]
+        else:
+            self.shards = all_shards
+        self.total_chunks = sum(
+            int(max(0, shard.token_count // self.stride)) for shard in self.shards
+        )
+
     def __len__(self) -> int:
-        return self.num_samples
+        return self.total_chunks
 
-    def __getitem__(self, index: int) -> dict[str, torch.Tensor]:
-        if index < 0 or index >= self.num_samples:
-            raise IndexError(index)
-        sample_index = self.sample_start + index
-        start = sample_index * self.stride
-        end = start + self.stride
-        chunk = np.asarray(self._tokens[start:end], dtype=np.int64)
+    def _iter_worker_shards(self) -> list[PackedShard]:
+        worker = get_worker_info()
+        if worker is None:
+            worker_id = 0
+            num_workers = 1
+        else:
+            worker_id = worker.id
+            num_workers = worker.num_workers
 
-        input_ids = torch.from_numpy(chunk[:-1].copy()).long()
-        labels = torch.from_numpy(chunk[1:].copy()).long()
-        return {
-            "input_ids": input_ids,
-            "labels": labels,
-            "mask": self._mask,
-        }
+        if num_workers <= 1:
+            selected = list(self.shards)
+        else:
+            selected = [
+                shard for idx, shard in enumerate(self.shards) if idx % num_workers == worker_id
+            ]
+        if self.shuffle:
+            rng = random.Random(self.seed + worker_id)
+            rng.shuffle(selected)
+        return selected
+
+    def __iter__(self) -> Iterator[dict[str, torch.Tensor]]:
+        shards = self._iter_worker_shards()
+        for shard in shards:
+            if not shard.bin_path.exists():
+                continue
+            mm = np.memmap(shard.bin_path, mode="r", dtype=np.uint8)
+            chunk_count = int(mm.shape[0]) // self.stride
+            for chunk_idx in range(chunk_count):
+                start = chunk_idx * self.stride
+                end = start + self.stride
+                chunk = np.asarray(mm[start:end], dtype=np.int64)
+                input_ids = torch.from_numpy(chunk[:-1].copy()).long()
+                labels = torch.from_numpy(chunk[1:].copy()).long()
+                yield {
+                    "input_ids": input_ids,
+                    "labels": labels,
+                    "mask": self._mask,
+                }

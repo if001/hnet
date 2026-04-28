@@ -22,10 +22,9 @@ from ..utils.train import group_params, load_balancing_loss
 from .config import DatasetSource, TrainingConfig
 from .data import (
     DefaultRecordFormatter,
-    PackedByteDataset,
+    PackedMixByteDataset,
     StreamingByteDataset,
-    compute_packed_total_tokens,
-    load_packed_metadata,
+    list_packed_shards,
 )
 
 
@@ -198,18 +197,18 @@ def create_packed_dataloader(
     training_config: TrainingConfig,
     packed_dir: str,
     shuffle: bool,
-    sample_start: int = 0,
-    sample_end: int | None = None,
+    shard_indices: list[int] | None = None,
     num_workers: int | None = None,
 ) -> DataLoader[dict[str, torch.Tensor]]:
     effective_num_workers = (
         training_config.num_workers if num_workers is None else num_workers
     )
-    dataset = PackedByteDataset(
+    dataset = PackedMixByteDataset(
         packed_dir=packed_dir,
         seq_len=training_config.seq_len,
-        sample_start=sample_start,
-        sample_end=sample_end,
+        shuffle=shuffle,
+        seed=training_config.seed,
+        shard_indices=shard_indices,
     )
     dataloader_kwargs: dict[str, object] = {}
     if effective_num_workers > 0:
@@ -219,7 +218,7 @@ def create_packed_dataloader(
     return DataLoader(
         dataset,
         batch_size=training_config.batch_size,
-        shuffle=shuffle,
+        shuffle=False,
         num_workers=effective_num_workers,
         pin_memory=torch.cuda.is_available(),
         **dataloader_kwargs,
@@ -340,17 +339,14 @@ def estimate_dataset_examples(
 def estimate_packed_optimizer_steps(
     training_config: TrainingConfig,
     packed_dir: str,
-    sample_start: int = 0,
-    sample_end: int | None = None,
+    shard_indices: list[int] | None = None,
 ) -> tuple[int, int, int]:
-    total_tokens = compute_packed_total_tokens(packed_dir)
+    shards = list_packed_shards(packed_dir)
+    if shard_indices is not None:
+        shards = [shards[i] for i in shard_indices if 0 <= int(i) < len(shards)]
+    total_tokens = int(sum(int(shard.token_count) for shard in shards))
     stride = training_config.seq_len + 1
-    total_micro_batches = total_tokens // stride
-    if sample_end is None:
-        sample_end = total_micro_batches
-    sample_start = max(0, sample_start)
-    sample_end = min(total_micro_batches, sample_end)
-    train_micro_batches = max(0, sample_end - sample_start)
+    train_micro_batches = total_tokens // stride
     optimizer_steps = max(
         0,
         math.ceil(
@@ -708,18 +704,22 @@ def train(training_config: TrainingConfig) -> None:
         packed_dir = training_config.packed_data_dir
         assert packed_dir is not None
 
-        packed_metadata = load_packed_metadata(packed_dir)
+        all_train_shards = list_packed_shards(packed_dir)
         logger.info(
-            "train_data_source=packed packed_dir=%s total_tokens=%s",
+            "train_data_source=packed packed_dir=%s shard_count=%d total_tokens=%d",
             packed_dir,
-            packed_metadata.get("total_tokens"),
+            len(all_train_shards),
+            sum(int(s.token_count) for s in all_train_shards),
         )
+        if len(all_train_shards) <= 1:
+            logger.warning(
+                "packed_shard_count<=1. For better worker parallelism, create more shards via --max-shard-tokens."
+            )
 
         _total_tokens, total_chunks, _ = estimate_packed_optimizer_steps(
             training_config,
             packed_dir=packed_dir,
-            sample_start=0,
-            sample_end=None,
+            shard_indices=None,
         )
         if total_chunks <= 1:
             raise ValueError(
@@ -735,42 +735,52 @@ def train(training_config: TrainingConfig) -> None:
             _val_tokens, _val_chunks, _ = estimate_packed_optimizer_steps(
                 training_config,
                 packed_dir=val_dir,
-                sample_start=0,
-                sample_end=None,
+                shard_indices=None,
             )
             if _val_chunks <= 0:
                 raise ValueError(
                     f"Packed validation dataset is too small: chunks={_val_chunks}"
                 )
-            train_chunk_start = 0
-            train_chunk_end = total_chunks
             train_chunks = total_chunks
             dataloader = create_packed_dataloader(
                 training_config=training_config,
                 packed_dir=packed_dir,
                 shuffle=True,
-                sample_start=train_chunk_start,
-                sample_end=train_chunk_end,
+                shard_indices=None,
             )
             validation_dataloader = create_packed_dataloader(
                 training_config=training_config,
                 packed_dir=val_dir,
                 shuffle=False,
-                sample_start=0,
-                sample_end=None,
+                shard_indices=None,
                 num_workers=0,
             )
         else:
-            val_chunks = max(
-                1, int(round(total_chunks * training_config.validation_split_ratio))
+            shard_indices = list(range(len(all_train_shards)))
+            val_shard_count = max(
+                1,
+                int(round(len(shard_indices) * training_config.validation_split_ratio)),
             )
-            val_chunks = min(val_chunks, total_chunks - 1)
-            train_chunks = total_chunks - val_chunks
-            train_chunk_start = 0
-            train_chunk_end = train_chunks
+            val_shard_count = min(val_shard_count, len(shard_indices) - 1)
+            split_at = len(shard_indices) - val_shard_count
+            train_shard_indices = shard_indices[:split_at]
+            val_shard_indices = shard_indices[split_at:]
+
+            _, train_chunks, _ = estimate_packed_optimizer_steps(
+                training_config,
+                packed_dir=packed_dir,
+                shard_indices=train_shard_indices,
+            )
+            _, val_chunks, _ = estimate_packed_optimizer_steps(
+                training_config,
+                packed_dir=packed_dir,
+                shard_indices=val_shard_indices,
+            )
             logger.info(
-                "validation_source_mode=split_from_packed ratio=%.4f train_chunks=%d val_chunks=%d",
+                "validation_source_mode=split_from_packed ratio=%.4f train_shards=%d val_shards=%d train_chunks=%d val_chunks=%d",
                 training_config.validation_split_ratio,
+                len(train_shard_indices),
+                len(val_shard_indices),
                 train_chunks,
                 val_chunks,
             )
@@ -778,15 +788,13 @@ def train(training_config: TrainingConfig) -> None:
                 training_config=training_config,
                 packed_dir=packed_dir,
                 shuffle=True,
-                sample_start=train_chunk_start,
-                sample_end=train_chunk_end,
+                shard_indices=train_shard_indices,
             )
             validation_dataloader = create_packed_dataloader(
                 training_config=training_config,
                 packed_dir=packed_dir,
                 shuffle=False,
-                sample_start=train_chunk_end,
-                sample_end=total_chunks,
+                shard_indices=val_shard_indices,
                 num_workers=0,
             )
 

@@ -53,6 +53,18 @@ def parse_args() -> TrainingConfig:
         help="Named dataset template from hnet.training.dataset_template.",
     )
     parser.add_argument(
+        "--packed-data-dir",
+        type=str,
+        default=None,
+        help="Path to prepacked tokenized dataset directory (contains data.bin and metadata.json).",
+    )
+    parser.add_argument(
+        "--packed-validation-data-dir",
+        type=str,
+        default=None,
+        help="Optional packed validation dataset directory.",
+    )
+    parser.add_argument(
         "--validation-dataset",
         action="append",
         dest="validation_datasets",
@@ -138,6 +150,9 @@ def parse_args() -> TrainingConfig:
     parser.add_argument("--rope-beta-slow", type=float, default=1.0)
     args = parser.parse_args()
 
+    if args.packed_validation_data_dir is not None and args.packed_data_dir is None:
+        raise ValueError("--packed-validation-data-dir requires --packed-data-dir")
+
     compression_ratios = args.compression_ratios or [4.0]
 
     if args.lr_multipliers:
@@ -151,7 +166,9 @@ def parse_args() -> TrainingConfig:
         )
         print("auto calc lr_multipliers", lr_multipliers)
 
-    if args.datasets:
+    if args.packed_data_dir is not None:
+        datasets = []
+    elif args.datasets:
         datasets = [DatasetSource(name=name) for name in args.datasets]
     elif args.dataset_template:
         datasets = list(getattr(dataset_template, args.dataset_template))
@@ -185,6 +202,8 @@ def parse_args() -> TrainingConfig:
         model_config_path=args.model_config_path,
         output_dir=args.output_dir,
         datasets=datasets,
+        packed_data_dir=args.packed_data_dir,
+        packed_validation_data_dir=args.packed_validation_data_dir,
         validation_datasets=validation_datasets,
         chunk_prompts=[p for p in (args.chunk_prompts or []) if p.strip()],
         seq_len=args.seq_len,

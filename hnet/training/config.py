@@ -20,6 +20,8 @@ class TrainingConfig:
             DatasetSource(name="if001/bunpo_phi4"),
         ]
     )
+    packed_data_dir: str | None = None
+    packed_validation_data_dir: str | None = None
     validation_datasets: list[DatasetSource] | None = None
     chunk_prompts: list[str] = field(default_factory=list)
     seq_len: int = 512

@@ -2,8 +2,10 @@ import json
 import logging
 from collections.abc import Iterable, Iterator, Mapping, Sequence
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Protocol
 
+import numpy as np
 import torch
 from datasets import IterableDataset as HFIterableDataset
 from datasets import concatenate_datasets, load_dataset
@@ -221,3 +223,76 @@ class StreamingByteDataset(torch.utils.data.IterableDataset):
                     "labels": labels,
                     "mask": mask,
                 }
+
+
+def _resolve_packed_paths(packed_dir: str | Path) -> tuple[Path, Path]:
+    base = Path(packed_dir)
+    data_path = base / "data.bin"
+    metadata_path = base / "metadata.json"
+    return data_path, metadata_path
+
+
+def load_packed_metadata(packed_dir: str | Path) -> dict[str, object]:
+    _data_path, metadata_path = _resolve_packed_paths(packed_dir)
+    if not metadata_path.exists():
+        raise FileNotFoundError(f"metadata.json not found under {packed_dir}")
+    return json.loads(metadata_path.read_text(encoding="utf-8"))
+
+
+def compute_packed_total_tokens(packed_dir: str | Path) -> int:
+    data_path, _metadata_path = _resolve_packed_paths(packed_dir)
+    if not data_path.exists():
+        raise FileNotFoundError(f"data.bin not found under {packed_dir}")
+    return data_path.stat().st_size
+
+
+class PackedByteDataset(torch.utils.data.Dataset):
+    def __init__(
+        self,
+        packed_dir: str | Path,
+        seq_len: int,
+        sample_start: int = 0,
+        sample_end: int | None = None,
+    ) -> None:
+        super().__init__()
+        self.seq_len = seq_len
+        self.stride = seq_len + 1
+
+        data_path, _metadata_path = _resolve_packed_paths(packed_dir)
+        if not data_path.exists():
+            raise FileNotFoundError(f"data.bin not found under {packed_dir}")
+
+        self._tokens = np.memmap(data_path, mode="r", dtype=np.uint8)
+        total_tokens = int(self._tokens.shape[0])
+        total_samples = total_tokens // self.stride
+
+        if sample_end is None:
+            sample_end = total_samples
+        sample_start = max(0, sample_start)
+        sample_end = min(total_samples, sample_end)
+        if sample_end < sample_start:
+            sample_end = sample_start
+
+        self.sample_start = sample_start
+        self.sample_end = sample_end
+        self.num_samples = self.sample_end - self.sample_start
+        self._mask = torch.ones(self.seq_len, dtype=torch.bool)
+
+    def __len__(self) -> int:
+        return self.num_samples
+
+    def __getitem__(self, index: int) -> dict[str, torch.Tensor]:
+        if index < 0 or index >= self.num_samples:
+            raise IndexError(index)
+        sample_index = self.sample_start + index
+        start = sample_index * self.stride
+        end = start + self.stride
+        chunk = np.asarray(self._tokens[start:end], dtype=np.int64)
+
+        input_ids = torch.from_numpy(chunk[:-1].copy()).long()
+        labels = torch.from_numpy(chunk[1:].copy()).long()
+        return {
+            "input_ids": input_ids,
+            "labels": labels,
+            "mask": self._mask,
+        }

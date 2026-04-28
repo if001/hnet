@@ -7,7 +7,12 @@ from torch.utils.data import DataLoader
 
 import hnet.training.dataset_template as dataset_template
 from hnet.training import DatasetSource
-from hnet.training.data import DefaultRecordFormatter, StreamingByteDataset
+from hnet.training.data import (
+    DefaultRecordFormatter,
+    PackedByteDataset,
+    StreamingByteDataset,
+    compute_packed_total_tokens,
+)
 
 
 TEMPLATE_CHOICES = sorted(
@@ -36,6 +41,12 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--grad-accum-steps", type=int, default=8)
     parser.add_argument("--num-workers", type=int, default=0)
     parser.add_argument("--shuffle-buffer-size", type=int, default=512)
+    parser.add_argument(
+        "--packed-data-dir",
+        type=str,
+        default=None,
+        help="Path to packed dataset dir (data.bin / metadata.json).",
+    )
     parser.add_argument("--log-every", type=int, default=200)
     return parser.parse_args()
 
@@ -53,14 +64,20 @@ def resolve_datasets(args: argparse.Namespace) -> list[DatasetSource]:
 
 def main() -> None:
     args = parse_args()
-    sources = resolve_datasets(args)
-
-    dataset = StreamingByteDataset(
-        sources=sources,
-        seq_len=args.seq_len,
-        formatter=DefaultRecordFormatter(),
-        shuffle_buffer_size=args.shuffle_buffer_size,
-    )
+    if args.packed_data_dir is not None:
+        sources: list[DatasetSource] = []
+        dataset = PackedByteDataset(
+            packed_dir=args.packed_data_dir,
+            seq_len=args.seq_len,
+        )
+    else:
+        sources = resolve_datasets(args)
+        dataset = StreamingByteDataset(
+            sources=sources,
+            seq_len=args.seq_len,
+            formatter=DefaultRecordFormatter(),
+            shuffle_buffer_size=args.shuffle_buffer_size,
+        )
     dataloader_kwargs: dict[str, object] = {}
     if args.num_workers > 0:
         dataloader_kwargs["persistent_workers"] = True
@@ -75,7 +92,11 @@ def main() -> None:
     )
 
     print("estimating_epoch_steps=true")
-    print(f"datasets={[s.name for s in sources]}")
+    if args.packed_data_dir is not None:
+        print(f"packed_data_dir={args.packed_data_dir}")
+        print(f"packed_total_tokens={compute_packed_total_tokens(args.packed_data_dir)}")
+    else:
+        print(f"datasets={[s.name for s in sources]}")
     print(
         f"config seq_len={args.seq_len} batch_size={args.batch_size} "
         f"grad_accum_steps={args.grad_accum_steps} num_workers={args.num_workers}"

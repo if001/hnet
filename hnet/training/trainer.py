@@ -20,7 +20,13 @@ from ..models.mixer_seq import HNetForCausalLM
 from .chunking_utils import format_stage_compact, inspect_prompt_chunks
 from ..utils.train import group_params, load_balancing_loss
 from .config import DatasetSource, TrainingConfig
-from .data import DefaultRecordFormatter, StreamingByteDataset
+from .data import (
+    DefaultRecordFormatter,
+    PackedByteDataset,
+    StreamingByteDataset,
+    compute_packed_total_tokens,
+    load_packed_metadata,
+)
 
 
 torch.backends.cuda.matmul.allow_tf32 = True
@@ -188,6 +194,38 @@ def create_dataloader(
     )
 
 
+def create_packed_dataloader(
+    training_config: TrainingConfig,
+    packed_dir: str,
+    shuffle: bool,
+    sample_start: int = 0,
+    sample_end: int | None = None,
+    num_workers: int | None = None,
+) -> DataLoader[dict[str, torch.Tensor]]:
+    effective_num_workers = (
+        training_config.num_workers if num_workers is None else num_workers
+    )
+    dataset = PackedByteDataset(
+        packed_dir=packed_dir,
+        seq_len=training_config.seq_len,
+        sample_start=sample_start,
+        sample_end=sample_end,
+    )
+    dataloader_kwargs: dict[str, object] = {}
+    if effective_num_workers > 0:
+        dataloader_kwargs["persistent_workers"] = True
+        dataloader_kwargs["prefetch_factor"] = 2
+
+    return DataLoader(
+        dataset,
+        batch_size=training_config.batch_size,
+        shuffle=shuffle,
+        num_workers=effective_num_workers,
+        pin_memory=torch.cuda.is_available(),
+        **dataloader_kwargs,
+    )
+
+
 def compute_ratio_loss(
     boundary_predictions: list[object],
     compression_ratios: list[float],
@@ -297,6 +335,30 @@ def estimate_dataset_examples(
         training_config.batch_size * training_config.grad_accum_steps
     )
     return total_examples, optimizer_steps
+
+
+def estimate_packed_optimizer_steps(
+    training_config: TrainingConfig,
+    packed_dir: str,
+    sample_start: int = 0,
+    sample_end: int | None = None,
+) -> tuple[int, int, int]:
+    total_tokens = compute_packed_total_tokens(packed_dir)
+    stride = training_config.seq_len + 1
+    total_micro_batches = total_tokens // stride
+    if sample_end is None:
+        sample_end = total_micro_batches
+    sample_start = max(0, sample_start)
+    sample_end = min(total_micro_batches, sample_end)
+    train_micro_batches = max(0, sample_end - sample_start)
+    optimizer_steps = max(
+        0,
+        math.ceil(
+            train_micro_batches
+            / float(training_config.batch_size * training_config.grad_accum_steps)
+        ),
+    )
+    return total_tokens, train_micro_batches, optimizer_steps
 
 
 def split_train_validation_sources(
@@ -634,33 +696,154 @@ def train(training_config: TrainingConfig) -> None:
     )
     logger.info("validation_metrics_csv=%s", validation_metrics_logger.output_path)
 
-    train_sources = training_config.datasets
-    validation_sources: list[DatasetSource]
+    use_packed_data = training_config.packed_data_dir is not None
+    estimated_examples: int | None = None
+    estimated_optimizer_steps: int | None = None
 
-    if training_config.validation_datasets is not None:
-        validation_sources = training_config.validation_datasets
-        logger.info("validation_source_mode=explicit")
-    else:
-        train_sources, validation_sources = split_train_validation_sources(
-            training_config.datasets,
-            training_config.validation_split_ratio,
+    if use_packed_data:
+        if training_config.validation_datasets is not None:
+            raise ValueError(
+                "validation_datasets cannot be used together with packed_data_dir"
+            )
+        packed_dir = training_config.packed_data_dir
+        assert packed_dir is not None
+
+        packed_metadata = load_packed_metadata(packed_dir)
+        logger.info(
+            "train_data_source=packed packed_dir=%s total_tokens=%s",
+            packed_dir,
+            packed_metadata.get("total_tokens"),
+        )
+
+        _total_tokens, total_chunks, _ = estimate_packed_optimizer_steps(
+            training_config,
+            packed_dir=packed_dir,
+            sample_start=0,
+            sample_end=None,
+        )
+        if total_chunks <= 1:
+            raise ValueError(
+                f"Packed dataset is too small for training: chunks={total_chunks}"
+            )
+
+        if training_config.packed_validation_data_dir is not None:
+            val_dir = training_config.packed_validation_data_dir
+            logger.info(
+                "validation_source_mode=packed_explicit packed_validation_data_dir=%s",
+                val_dir,
+            )
+            _val_tokens, _val_chunks, _ = estimate_packed_optimizer_steps(
+                training_config,
+                packed_dir=val_dir,
+                sample_start=0,
+                sample_end=None,
+            )
+            if _val_chunks <= 0:
+                raise ValueError(
+                    f"Packed validation dataset is too small: chunks={_val_chunks}"
+                )
+            train_chunk_start = 0
+            train_chunk_end = total_chunks
+            train_chunks = total_chunks
+            dataloader = create_packed_dataloader(
+                training_config=training_config,
+                packed_dir=packed_dir,
+                shuffle=True,
+                sample_start=train_chunk_start,
+                sample_end=train_chunk_end,
+            )
+            validation_dataloader = create_packed_dataloader(
+                training_config=training_config,
+                packed_dir=val_dir,
+                shuffle=False,
+                sample_start=0,
+                sample_end=None,
+                num_workers=0,
+            )
+        else:
+            val_chunks = max(
+                1, int(round(total_chunks * training_config.validation_split_ratio))
+            )
+            val_chunks = min(val_chunks, total_chunks - 1)
+            train_chunks = total_chunks - val_chunks
+            train_chunk_start = 0
+            train_chunk_end = train_chunks
+            logger.info(
+                "validation_source_mode=split_from_packed ratio=%.4f train_chunks=%d val_chunks=%d",
+                training_config.validation_split_ratio,
+                train_chunks,
+                val_chunks,
+            )
+            dataloader = create_packed_dataloader(
+                training_config=training_config,
+                packed_dir=packed_dir,
+                shuffle=True,
+                sample_start=train_chunk_start,
+                sample_end=train_chunk_end,
+            )
+            validation_dataloader = create_packed_dataloader(
+                training_config=training_config,
+                packed_dir=packed_dir,
+                shuffle=False,
+                sample_start=train_chunk_end,
+                sample_end=total_chunks,
+                num_workers=0,
+            )
+
+        estimated_examples = train_chunks
+        estimated_optimizer_steps = max(
+            0,
+            math.ceil(
+                train_chunks
+                / float(training_config.batch_size * training_config.grad_accum_steps)
+            ),
         )
         logger.info(
-            "validation_source_mode=split_from_train ratio=%.4f (fixed holdout)",
-            training_config.validation_split_ratio,
-        )
-
-    estimated_examples, estimated_optimizer_steps = estimate_dataset_examples(
-        training_config,
-        sources=train_sources,
-    )
-    if estimated_examples is None:
-        logger.info("dataset_examples_estimate=unavailable")
-    else:
-        logger.info(
-            "dataset_examples_estimate=%d data_mix=concatenate_then_shuffle rough_optimizer_steps=%d",
-            estimated_examples,
+            "packed_chunks=%d train_chunks=%d rough_optimizer_steps=%d",
+            total_chunks,
+            train_chunks,
             estimated_optimizer_steps,
+        )
+    else:
+        train_sources = training_config.datasets
+        validation_sources: list[DatasetSource]
+
+        if training_config.validation_datasets is not None:
+            validation_sources = training_config.validation_datasets
+            logger.info("validation_source_mode=explicit")
+        else:
+            train_sources, validation_sources = split_train_validation_sources(
+                training_config.datasets,
+                training_config.validation_split_ratio,
+            )
+            logger.info(
+                "validation_source_mode=split_from_train ratio=%.4f (fixed holdout)",
+                training_config.validation_split_ratio,
+            )
+
+        estimated_examples, estimated_optimizer_steps = estimate_dataset_examples(
+            training_config,
+            sources=train_sources,
+        )
+        if estimated_examples is None:
+            logger.info("dataset_examples_estimate=unavailable")
+        else:
+            logger.info(
+                "dataset_examples_estimate=%d data_mix=concatenate_then_shuffle rough_optimizer_steps=%d",
+                estimated_examples,
+                estimated_optimizer_steps,
+            )
+
+        dataloader = create_dataloader(
+            training_config,
+            sources=train_sources,
+            shuffle=True,
+        )
+        validation_dataloader = create_dataloader(
+            training_config,
+            sources=validation_sources,
+            shuffle=False,
+            num_workers=0,
         )
 
     target_steps = training_config.max_steps
@@ -691,11 +874,6 @@ def train(training_config: TrainingConfig) -> None:
         format_parameter_count(trainable_params),
     )
 
-    dataloader = create_dataloader(
-        training_config,
-        sources=train_sources,
-        shuffle=True,
-    )
     data_iterator = iter(dataloader)
 
     param_groups = group_params(model)
@@ -711,12 +889,6 @@ def train(training_config: TrainingConfig) -> None:
         move_optimizer_state_to_device(optimizer, device)
         logger.info("resumed_optimizer=true")
 
-    validation_dataloader = create_dataloader(
-        training_config,
-        sources=validation_sources,
-        shuffle=False,
-        num_workers=0,
-    )
     validation_batches = build_cached_validation_batches(
         validation_dataloader,
         training_config.validation_max_batches,

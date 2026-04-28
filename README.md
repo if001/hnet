@@ -19,7 +19,7 @@ einops optree regex omegaconf \
 
 ## Train
 `--dataset` を指定した場合はそれを優先し、未指定時は `--dataset-template` を使えます。
-`--max-steps` を省略すると、設定したデータセットを使い切るまで学習します。
+`--max-steps` を省略した場合は 1epoch で終了します（streaming / packed の両方）。
 
 ```sh
 !python train.py \
@@ -40,6 +40,45 @@ einops optree regex omegaconf \
 --validation-max-batches 20 \
 --output-dir artifacts/hnet_1stage_100m
 ```
+
+### packed dataset（推奨）
+`dataset-template` から事前に `mix_manifest.json` と datasetごとの shard (`data-XXXXX.bin/.idx`) を作成し、学習時は mmap で読み込みます。
+
+```sh
+python prepare_packed_dataset.py \
+--dataset-template SOURCES_JA8_EN1_CODE1_10 \
+--max-shard-tokens 50000000 \
+--num-proc 4 \
+--output-dir artifacts/packed/j8e1c1_10
+```
+
+```sh
+python train.py \
+--packed-data-dir artifacts/packed/j8e1c1_10 \
+--model-config-path configs/hnet_2stage_200m.json \
+--validation-split-ratio 0.05 \
+--batch-size 64 \
+--grad-accum-steps 4 \
+--save-every 4000 \
+--output-dir artifacts/hnet_2stage_200m_packed
+```
+
+検証用 packed データを別途使う場合:
+
+```sh
+python train.py \
+--packed-data-dir artifacts/packed/train \
+--packed-validation-data-dir artifacts/packed/val \
+--model-config-path configs/hnet_2stage_200m.json \
+--batch-size 64 \
+--grad-accum-steps 4 \
+--output-dir artifacts/hnet_2stage_200m_packed
+```
+
+`prepare_packed_dataset.py` の出力:
+- `mix_manifest.json`（全datasetのmix定義）
+- `datasets/<source_alias>/manifest.json`
+- `datasets/<source_alias>/data-00000.bin`, `data-00000.idx`, ...
 
 主な出力ファイル:
 - `artifacts/.../checkpoint_step_XXXXXX.pt`
@@ -144,10 +183,27 @@ python count_dataset_tokens.py \
 python train.py \
     --model-config-path artifacts/base/model_config.json \
     --resume-from-checkpoint artifacts/base/checkpoint_step_008000.pt \
-    --max-steps 12000 \
     --rope-type yarn \
     --rope-factor 4.0 \
-    --rope-original-max-position-embeddings 32768
+    --rope-original-max-position-embeddings 4096 \
+    --lr-multiplier 3.0 \
+    --lr-multiplier 1.0 \
+    --lr-multiplier 1.0 \
+    --compression-ratio 3 \
+    --compression-ratio 3 \
+    --dataset-template 'SOURCES_JA8_EN1_CODE1_10' \
+    --seq-len 16384 \
+    --batch-size 4 \
+    --grad-accum-steps 4 \
+    --learning-rate 4.0e-4 \
+    --save-every 4000 \
+    --max-steps 16000 \
+    --log-every 2000 \
+    --validation-every 1000 \
+    --validation-max-batches 20 \
+    --validation-split-ratio 0.05 \
+    --shuffle-buffer-size=16384 \
+    --output-dir "artifacts/hnet_2stage_200m_j8_e1_c1_10"
 ```
 
 ## sft

@@ -407,17 +407,18 @@ def save_checkpoint(
     optimizer: AdamW,
     step: int,
     output_dir: Path,
+    data_state: Mapping[str, int] | None = None,
 ) -> Path:
     output_dir.mkdir(parents=True, exist_ok=True)
     checkpoint_path = output_dir / f"checkpoint_step_{step:06d}.pt"
-    torch.save(
-        {
-            "model": model.state_dict(),
-            "optimizer": optimizer.state_dict(),
-            "step": step,
-        },
-        checkpoint_path,
-    )
+    payload: dict[str, object] = {
+        "model": model.state_dict(),
+        "optimizer": optimizer.state_dict(),
+        "step": step,
+    }
+    if data_state is not None:
+        payload["data_state"] = dict(data_state)
+    torch.save(payload, checkpoint_path)
     return checkpoint_path
 
 
@@ -663,6 +664,7 @@ def train(training_config: TrainingConfig) -> None:
 
     resume_checkpoint = None
     resumed_step = 0
+    resumed_data_micro_batches = 0
     if training_config.resume_from_checkpoint is not None:
         resume_checkpoint = load_checkpoint_file(
             training_config.resume_from_checkpoint, device
@@ -676,6 +678,18 @@ def train(training_config: TrainingConfig) -> None:
             if isinstance(raw_step, int):
                 resumed_step = raw_step
                 logger.info("resumed_step=%d", resumed_step)
+        if (
+            training_config.packed_data_dir is not None
+            and isinstance(resume_checkpoint, Mapping)
+            and isinstance(resume_checkpoint.get("data_state"), Mapping)
+        ):
+            data_state = resume_checkpoint["data_state"]
+            raw_micro = data_state.get("micro_batches_seen")
+            if isinstance(raw_micro, int) and raw_micro >= 0:
+                resumed_data_micro_batches = raw_micro
+                logger.info(
+                    "resumed_data_micro_batches=%d", resumed_data_micro_batches
+                )
     output_dir = Path(training_config.output_dir)
     saved_config_path = save_hnet_config(model_config, output_dir / "model_config.json")
     logger.info("saved_model_config=%s", saved_config_path)
@@ -883,6 +897,20 @@ def train(training_config: TrainingConfig) -> None:
     )
 
     data_iterator = iter(dataloader)
+    if use_packed_data and resumed_data_micro_batches > 0:
+        skipped = 0
+        while skipped < resumed_data_micro_batches:
+            try:
+                next(data_iterator)
+            except StopIteration:
+                logger.warning(
+                    "resume_data_position_out_of_range requested=%d skipped=%d",
+                    resumed_data_micro_batches,
+                    skipped,
+                )
+                break
+            skipped += 1
+        logger.info("resume_data_position_skipped_micro_batches=%d", skipped)
 
     param_groups = group_params(model)
     apply_weight_decay(param_groups, training_config.weight_decay)
@@ -908,6 +936,8 @@ def train(training_config: TrainingConfig) -> None:
 
     last_saved_step = 0
     completed_steps = resumed_step
+    data_micro_batches_seen = resumed_data_micro_batches
+    packed_epoch_total_micro_batches = len(dataloader) if use_packed_data else None
 
     while (
         training_config.max_steps is None or completed_steps < training_config.max_steps
@@ -941,6 +971,7 @@ def train(training_config: TrainingConfig) -> None:
             except StopIteration:
                 break
             micro_batches_processed += 1
+            data_micro_batches_seen += 1
             input_ids = batch["input_ids"].to(device, non_blocking=True)
             labels = batch["labels"].to(device, non_blocking=True)
             mask = batch["mask"].to(device, non_blocking=True)
@@ -972,7 +1003,19 @@ def train(training_config: TrainingConfig) -> None:
 
         if micro_batches_processed == 0:
             if training_config.max_steps is None:
-                logger.info("epoch_completed=true completed_steps=%d", completed_steps)
+                if (
+                    use_packed_data
+                    and packed_epoch_total_micro_batches is not None
+                    and packed_epoch_total_micro_batches > 0
+                ):
+                    logger.info(
+                        "epoch_completed=true completed_steps=%d micro_batch=%d/%d",
+                        completed_steps,
+                        data_micro_batches_seen,
+                        packed_epoch_total_micro_batches,
+                    )
+                else:
+                    logger.info("epoch_completed=true completed_steps=%d", completed_steps)
             else:
                 logger.warning(
                     "data_exhausted_before_target=true completed_steps=%d target_steps=%d",
@@ -1005,15 +1048,29 @@ def train(training_config: TrainingConfig) -> None:
         )
 
         if completed_steps % training_config.log_every == 0 or completed_steps == 1:
+            packed_progress_text = ""
+            if (
+                use_packed_data
+                and packed_epoch_total_micro_batches is not None
+                and packed_epoch_total_micro_batches > 0
+            ):
+                packed_progress = 100.0 * data_micro_batches_seen / float(
+                    packed_epoch_total_micro_batches
+                )
+                packed_progress_text = (
+                    f" packed_epoch_progress={packed_progress:.2f}% "
+                    f"micro_batch={data_micro_batches_seen}/{packed_epoch_total_micro_batches}"
+                )
             if training_config.max_steps is not None:
                 epoch_progress = (
                     100.0 * completed_steps / float(max(1, training_config.max_steps))
                 )
                 logger.info(
-                    "step=%d/%d epoch_progress=%.2f%% lr=%.6g ce_loss=%.4f ratio_loss=%.4f total_loss=%.4f",
+                    "step=%d/%d epoch_progress=%.2f%%%s lr=%.6g ce_loss=%.4f ratio_loss=%.4f total_loss=%.4f",
                     completed_steps,
                     training_config.max_steps,
                     epoch_progress,
+                    packed_progress_text,
                     learning_rate,
                     average_ce,
                     average_ratio,
@@ -1024,9 +1081,10 @@ def train(training_config: TrainingConfig) -> None:
                     100.0 * completed_steps / float(max(1, estimated_optimizer_steps))
                 )
                 logger.info(
-                    "step=%d epoch_progress_est=%.2f%% lr=%.6g ce_loss=%.4f ratio_loss=%.4f total_loss=%.4f",
+                    "step=%d epoch_progress_est=%.2f%%%s lr=%.6g ce_loss=%.4f ratio_loss=%.4f total_loss=%.4f",
                     completed_steps,
                     epoch_progress,
+                    packed_progress_text,
                     learning_rate,
                     average_ce,
                     average_ratio,
@@ -1034,8 +1092,9 @@ def train(training_config: TrainingConfig) -> None:
                 )
             else:
                 logger.info(
-                    "step=%d epoch_progress=unavailable lr=%.6g ce_loss=%.4f ratio_loss=%.4f total_loss=%.4f",
+                    "step=%d epoch_progress=unavailable%s lr=%.6g ce_loss=%.4f ratio_loss=%.4f total_loss=%.4f",
                     completed_steps,
+                    packed_progress_text,
                     learning_rate,
                     average_ce,
                     average_ratio,
@@ -1090,6 +1149,16 @@ def train(training_config: TrainingConfig) -> None:
                 optimizer=optimizer,
                 step=completed_steps,
                 output_dir=output_dir,
+                data_state={
+                    "micro_batches_seen": data_micro_batches_seen,
+                    "epoch_micro_batches_total": int(
+                        packed_epoch_total_micro_batches
+                        if packed_epoch_total_micro_batches is not None
+                        else 0
+                    ),
+                }
+                if use_packed_data
+                else None,
             )
             last_saved_step = completed_steps
             logger.info("saved_checkpoint=%s", checkpoint_path)
@@ -1100,5 +1169,15 @@ def train(training_config: TrainingConfig) -> None:
             optimizer=optimizer,
             step=completed_steps,
             output_dir=output_dir,
+            data_state={
+                "micro_batches_seen": data_micro_batches_seen,
+                "epoch_micro_batches_total": int(
+                    packed_epoch_total_micro_batches
+                    if packed_epoch_total_micro_batches is not None
+                    else 0
+                ),
+            }
+            if use_packed_data
+            else None,
         )
         logger.info("saved_final_checkpoint=%s", checkpoint_path)

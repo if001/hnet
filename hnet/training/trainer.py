@@ -35,12 +35,15 @@ torch.backends.cudnn.allow_tf32 = True
 class TrainingMetricsLogger:
     fieldnames = ["step", "learning_rate", "ce_loss", "ratio_loss", "total_loss"]
 
-    def __init__(self, output_path: Path) -> None:
+    def __init__(self, output_path: Path, append: bool = False) -> None:
         self.output_path = output_path
         self.output_path.parent.mkdir(parents=True, exist_ok=True)
+        self.append = append
         self._initialize_file()
 
     def _initialize_file(self) -> None:
+        if self.append and self.output_path.exists():
+            return
         with self.output_path.open("w", encoding="utf-8", newline="") as handle:
             writer = csv.DictWriter(handle, fieldnames=self.fieldnames)
             writer.writeheader()
@@ -86,12 +89,15 @@ class ValidationMetricsLogger:
         "compression_l2_l0",
     ]
 
-    def __init__(self, output_path: Path) -> None:
+    def __init__(self, output_path: Path, append: bool = False) -> None:
         self.output_path = output_path
         self.output_path.parent.mkdir(parents=True, exist_ok=True)
+        self.append = append
         self._initialize_file()
 
     def _initialize_file(self) -> None:
+        if self.append and self.output_path.exists():
+            return
         with self.output_path.open("w", encoding="utf-8", newline="") as handle:
             writer = csv.DictWriter(handle, fieldnames=self.fieldnames)
             writer.writeheader()
@@ -698,11 +704,16 @@ def train(training_config: TrainingConfig) -> None:
     )
     logger.info("saved_training_config=%s", saved_training_config_path)
 
-    metrics_logger = TrainingMetricsLogger(output_dir / "training_metrics.csv")
+    append_metrics = training_config.resume_from_checkpoint is not None
+    metrics_logger = TrainingMetricsLogger(
+        output_dir / "training_metrics.csv",
+        append=append_metrics,
+    )
     logger.info("training_metrics_csv=%s", metrics_logger.output_path)
 
     validation_metrics_logger = ValidationMetricsLogger(
-        output_dir / "validation_metrics.csv"
+        output_dir / "validation_metrics.csv",
+        append=append_metrics,
     )
     logger.info("validation_metrics_csv=%s", validation_metrics_logger.output_path)
 

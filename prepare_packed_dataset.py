@@ -330,9 +330,7 @@ def main() -> None:
                 "skip_examples": int(source_dict.get("skip_examples", 0)),
                 "weight": weight,
                 "source_dir": str(Path(item["source_dir"]).relative_to(output_dir)),
-                "manifest": str(
-                    Path(item["manifest_path"]).relative_to(output_dir)
-                ),
+                "manifest": str(Path(item["manifest_path"]).relative_to(output_dir)),
                 "total_tokens": int(item["total_tokens"]),
             }
         )

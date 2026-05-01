@@ -1,6 +1,7 @@
 import json
 import logging
 import random
+from bisect import bisect_right
 from collections.abc import Iterable, Iterator, Mapping, Sequence
 from dataclasses import dataclass
 from pathlib import Path
@@ -246,10 +247,6 @@ class PackedShard:
     bin_path: Path
     token_count: int
 
-    @property
-    def chunk_count(self) -> int:
-        return self.token_count
-
 
 def _load_shards_from_mix_manifest(packed_dir: str | Path) -> list[PackedShard]:
     base = Path(packed_dir)
@@ -302,6 +299,7 @@ class PackedMixByteDataset(torch.utils.data.IterableDataset):
         shuffle: bool = True,
         seed: int = 42,
         shard_indices: Sequence[int] | None = None,
+        start_micro_batch: int = 0,
     ) -> None:
         super().__init__()
         self.packed_dir = Path(packed_dir)
@@ -309,6 +307,7 @@ class PackedMixByteDataset(torch.utils.data.IterableDataset):
         self.stride = seq_len + 1
         self.shuffle = shuffle
         self.seed = seed
+        self.start_micro_batch = max(0, int(start_micro_batch))
         self._mask = torch.ones(self.seq_len, dtype=torch.bool)
 
         all_shards = list_packed_shards(self.packed_dir)
@@ -345,14 +344,37 @@ class PackedMixByteDataset(torch.utils.data.IterableDataset):
             rng.shuffle(selected)
         return selected
 
+    def _compute_worker_shard_layout(
+        self, shards: Sequence[PackedShard]
+    ) -> tuple[list[int], list[int]]:
+        shard_chunk_counts = [
+            int(max(0, shard.token_count // self.stride)) for shard in shards
+        ]
+        prefix = [0]
+        for count in shard_chunk_counts:
+            prefix.append(prefix[-1] + count)
+        return shard_chunk_counts, prefix
+
     def __iter__(self) -> Iterator[dict[str, torch.Tensor]]:
         shards = self._iter_worker_shards()
-        for shard in shards:
+        shard_chunk_counts, prefix = self._compute_worker_shard_layout(shards)
+        worker_total_chunks = prefix[-1] if prefix else 0
+        if worker_total_chunks <= 0:
+            return
+
+        worker_start = min(self.start_micro_batch, worker_total_chunks)
+        start_shard_idx = max(0, bisect_right(prefix, worker_start) - 1)
+        start_offset = worker_start - prefix[start_shard_idx]
+
+        for local_idx, shard in enumerate(shards):
+            if local_idx < start_shard_idx:
+                continue
             if not shard.bin_path.exists():
                 continue
             mm = np.memmap(shard.bin_path, mode="r", dtype=np.uint8)
-            chunk_count = int(mm.shape[0]) // self.stride
-            for chunk_idx in range(chunk_count):
+            chunk_count = shard_chunk_counts[local_idx]
+            local_start = start_offset if local_idx == start_shard_idx else 0
+            for chunk_idx in range(local_start, chunk_count):
                 start = chunk_idx * self.stride
                 end = start + self.stride
                 chunk = np.asarray(mm[start:end], dtype=np.int64)

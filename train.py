@@ -56,7 +56,7 @@ def parse_args() -> TrainingConfig:
         "--packed-data-dir",
         type=str,
         default=None,
-        help="Path to prepacked tokenized dataset directory (contains data.bin and metadata.json).",
+        help="Path to prepacked tokenized dataset directory (mix_manifest.json + shard files).",
     )
     parser.add_argument(
         "--packed-validation-data-dir",

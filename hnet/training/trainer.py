@@ -204,17 +204,21 @@ def create_packed_dataloader(
     packed_dir: str,
     shuffle: bool,
     shard_indices: list[int] | None = None,
+    start_micro_batch: int = 0,
     num_workers: int | None = None,
 ) -> DataLoader[dict[str, torch.Tensor]]:
     effective_num_workers = (
         training_config.num_workers if num_workers is None else num_workers
     )
+    if start_micro_batch > 0 and effective_num_workers > 0:
+        effective_num_workers = 0
     dataset = PackedMixByteDataset(
         packed_dir=packed_dir,
         seq_len=training_config.seq_len,
         shuffle=shuffle,
         seed=training_config.seed,
         shard_indices=shard_indices,
+        start_micro_batch=start_micro_batch,
     )
     dataloader_kwargs: dict[str, object] = {}
     if effective_num_workers > 0:
@@ -766,18 +770,24 @@ def train(training_config: TrainingConfig) -> None:
                 raise ValueError(
                     f"Packed validation dataset is too small: chunks={_val_chunks}"
                 )
+            if resumed_data_micro_batches > 0 and training_config.num_workers > 0:
+                logger.info(
+                    "resume_data_jump_with_workers=true forcing_train_num_workers=0 for exact packed position restore"
+                )
             train_chunks = total_chunks
             dataloader = create_packed_dataloader(
                 training_config=training_config,
                 packed_dir=packed_dir,
                 shuffle=True,
                 shard_indices=None,
+                start_micro_batch=resumed_data_micro_batches,
             )
             validation_dataloader = create_packed_dataloader(
                 training_config=training_config,
                 packed_dir=val_dir,
                 shuffle=False,
                 shard_indices=None,
+                start_micro_batch=0,
                 num_workers=0,
             )
         else:
@@ -809,17 +819,23 @@ def train(training_config: TrainingConfig) -> None:
                 train_chunks,
                 val_chunks,
             )
+            if resumed_data_micro_batches > 0 and training_config.num_workers > 0:
+                logger.info(
+                    "resume_data_jump_with_workers=true forcing_train_num_workers=0 for exact packed position restore"
+                )
             dataloader = create_packed_dataloader(
                 training_config=training_config,
                 packed_dir=packed_dir,
                 shuffle=True,
                 shard_indices=train_shard_indices,
+                start_micro_batch=resumed_data_micro_batches,
             )
             validation_dataloader = create_packed_dataloader(
                 training_config=training_config,
                 packed_dir=packed_dir,
                 shuffle=False,
                 shard_indices=val_shard_indices,
+                start_micro_batch=0,
                 num_workers=0,
             )
 
@@ -908,20 +924,6 @@ def train(training_config: TrainingConfig) -> None:
     )
 
     data_iterator = iter(dataloader)
-    if use_packed_data and resumed_data_micro_batches > 0:
-        skipped = 0
-        while skipped < resumed_data_micro_batches:
-            try:
-                next(data_iterator)
-            except StopIteration:
-                logger.warning(
-                    "resume_data_position_out_of_range requested=%d skipped=%d",
-                    resumed_data_micro_batches,
-                    skipped,
-                )
-                break
-            skipped += 1
-        logger.info("resume_data_position_skipped_micro_batches=%d", skipped)
 
     param_groups = group_params(model)
     apply_weight_decay(param_groups, training_config.weight_decay)

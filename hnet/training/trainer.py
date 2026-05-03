@@ -325,6 +325,17 @@ def move_optimizer_state_to_device(optimizer: AdamW, device: torch.device) -> No
                 state[key] = value.to(device)
 
 
+def summarize_optimizer_state_bytes(optimizer: AdamW) -> tuple[int, int]:
+    tensor_count = 0
+    total_bytes = 0
+    for state in optimizer.state.values():
+        for value in state.values():
+            if torch.is_tensor(value):
+                tensor_count += 1
+                total_bytes += int(value.numel() * value.element_size())
+    return tensor_count, total_bytes
+
+
 def estimate_dataset_examples(
     training_config: TrainingConfig,
     sources: list[DatasetSource] | None = None,
@@ -1074,12 +1085,28 @@ def train(training_config: TrainingConfig) -> None:
                     f" packed_epoch_progress={packed_progress:.2f}% "
                     f"micro_batch={data_micro_batches_seen}/{packed_epoch_total_micro_batches}"
                 )
+            memory_text = ""
+            optimizer_text = ""
+            if device.type == "cuda":
+                allocated_mb = torch.cuda.memory_allocated(device) / (1024**2)
+                reserved_mb = torch.cuda.memory_reserved(device) / (1024**2)
+                max_allocated_mb = torch.cuda.max_memory_allocated(device) / (1024**2)
+                memory_text = (
+                    f" cuda_alloc_mb={allocated_mb:.1f}"
+                    f" cuda_reserved_mb={reserved_mb:.1f}"
+                    f" cuda_max_alloc_mb={max_allocated_mb:.1f}"
+                )
+            opt_tensor_count, opt_bytes = summarize_optimizer_state_bytes(optimizer)
+            optimizer_text = (
+                f" opt_state_tensors={opt_tensor_count}"
+                f" opt_state_mb={opt_bytes / (1024**2):.1f}"
+            )
             if training_config.max_steps is not None:
                 epoch_progress = (
                     100.0 * completed_steps / float(max(1, training_config.max_steps))
                 )
                 logger.info(
-                    "step=%d/%d epoch_progress=%.2f%%%s lr=%.6g ce_loss=%.4f ratio_loss=%.4f total_loss=%.4f",
+                    "step=%d/%d epoch_progress=%.2f%%%s lr=%.6g ce_loss=%.4f ratio_loss=%.4f total_loss=%.4f%s %s",
                     completed_steps,
                     training_config.max_steps,
                     epoch_progress,
@@ -1088,13 +1115,15 @@ def train(training_config: TrainingConfig) -> None:
                     average_ce,
                     average_ratio,
                     total_loss,
+                    memory_text,
+                    optimizer_text,
                 )
             elif estimated_optimizer_steps is not None:
                 epoch_progress = (
                     100.0 * completed_steps / float(max(1, estimated_optimizer_steps))
                 )
                 logger.info(
-                    "step=%d epoch_progress_est=%.2f%%%s lr=%.6g ce_loss=%.4f ratio_loss=%.4f total_loss=%.4f",
+                    "step=%d epoch_progress_est=%.2f%%%s lr=%.6g ce_loss=%.4f ratio_loss=%.4f total_loss=%.4f%s %s",
                     completed_steps,
                     epoch_progress,
                     packed_progress_text,
@@ -1102,16 +1131,20 @@ def train(training_config: TrainingConfig) -> None:
                     average_ce,
                     average_ratio,
                     total_loss,
+                    memory_text,
+                    optimizer_text,
                 )
             else:
                 logger.info(
-                    "step=%d epoch_progress=unavailable%s lr=%.6g ce_loss=%.4f ratio_loss=%.4f total_loss=%.4f",
+                    "step=%d epoch_progress=unavailable%s lr=%.6g ce_loss=%.4f ratio_loss=%.4f total_loss=%.4f%s %s",
                     completed_steps,
                     packed_progress_text,
                     learning_rate,
                     average_ce,
                     average_ratio,
                     total_loss,
+                    memory_text,
+                    optimizer_text,
                 )
 
         if (

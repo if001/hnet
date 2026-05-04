@@ -336,6 +336,19 @@ def summarize_optimizer_state_bytes(optimizer: AdamW) -> tuple[int, int]:
     return tensor_count, total_bytes
 
 
+def format_cuda_memory_text(device: torch.device) -> str:
+    if device.type != "cuda":
+        return "cuda_memory=unavailable"
+    allocated_mb = torch.cuda.memory_allocated(device) / (1024**2)
+    reserved_mb = torch.cuda.memory_reserved(device) / (1024**2)
+    max_allocated_mb = torch.cuda.max_memory_allocated(device) / (1024**2)
+    return (
+        f"cuda_alloc_mb={allocated_mb:.1f} "
+        f"cuda_reserved_mb={reserved_mb:.1f} "
+        f"cuda_max_alloc_mb={max_allocated_mb:.1f}"
+    )
+
+
 def estimate_dataset_examples(
     training_config: TrainingConfig,
     sources: list[DatasetSource] | None = None,
@@ -1088,14 +1101,7 @@ def train(training_config: TrainingConfig) -> None:
             memory_text = ""
             optimizer_text = ""
             if device.type == "cuda":
-                allocated_mb = torch.cuda.memory_allocated(device) / (1024**2)
-                reserved_mb = torch.cuda.memory_reserved(device) / (1024**2)
-                max_allocated_mb = torch.cuda.max_memory_allocated(device) / (1024**2)
-                memory_text = (
-                    f" cuda_alloc_mb={allocated_mb:.1f}"
-                    f" cuda_reserved_mb={reserved_mb:.1f}"
-                    f" cuda_max_alloc_mb={max_allocated_mb:.1f}"
-                )
+                memory_text = " " + format_cuda_memory_text(device)
             opt_tensor_count, opt_bytes = summarize_optimizer_state_bytes(optimizer)
             optimizer_text = (
                 f" opt_state_tensors={opt_tensor_count}"
@@ -1151,6 +1157,12 @@ def train(training_config: TrainingConfig) -> None:
             training_config.validation_every > 0
             and completed_steps % training_config.validation_every == 0
         ):
+            if device.type == "cuda":
+                logger.info(
+                    "event=validation_start step=%d %s",
+                    completed_steps,
+                    format_cuda_memory_text(device),
+                )
             model.eval()
             validation_metrics = evaluate_validation(
                 model=model,
@@ -1160,6 +1172,12 @@ def train(training_config: TrainingConfig) -> None:
                 validation_batches=validation_batches,
             )
             model.train()
+            if device.type == "cuda":
+                logger.info(
+                    "event=validation_end step=%d %s",
+                    completed_steps,
+                    format_cuda_memory_text(device),
+                )
 
             if validation_metrics is not None:
                 validation_metrics_logger.log(
@@ -1186,10 +1204,22 @@ def train(training_config: TrainingConfig) -> None:
                 output_dir=output_dir,
                 step=completed_steps,
             )
+            if device.type == "cuda":
+                logger.info(
+                    "event=chunk_report_end step=%d %s",
+                    completed_steps,
+                    format_cuda_memory_text(device),
+                )
             if chunk_report_path is not None:
                 logger.info("saved_validation_chunks=%s", chunk_report_path)
 
         if completed_steps % training_config.save_every == 0:
+            if device.type == "cuda":
+                logger.info(
+                    "event=save_start step=%d %s",
+                    completed_steps,
+                    format_cuda_memory_text(device),
+                )
             checkpoint_path = save_checkpoint(
                 model=model,
                 optimizer=optimizer,
@@ -1206,6 +1236,12 @@ def train(training_config: TrainingConfig) -> None:
                 if use_packed_data
                 else None,
             )
+            if device.type == "cuda":
+                logger.info(
+                    "event=save_end step=%d %s",
+                    completed_steps,
+                    format_cuda_memory_text(device),
+                )
             last_saved_step = completed_steps
             logger.info("saved_checkpoint=%s", checkpoint_path)
 

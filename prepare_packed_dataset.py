@@ -10,7 +10,7 @@ from datasets import load_dataset
 
 import hnet.training.dataset_template as dataset_template
 from hnet.training import DatasetSource
-from hnet.training.data import DefaultRecordFormatter
+from hnet.training.record_formatter import DefaultRecordFormatter
 from hnet.utils.tokenizers import ByteTokenizer
 
 
@@ -77,6 +77,12 @@ def parse_args() -> argparse.Namespace:
         type=int,
         default=42,
         help="Seed written to mix_manifest for downstream mixing reproducibility.",
+    )
+    parser.add_argument(
+        "--index-seq-len",
+        type=int,
+        default=512,
+        help="Sequence length used to build Megatron-style sample/shuffle indices.",
     )
     return parser.parse_args()
 
@@ -257,6 +263,8 @@ def main() -> None:
         raise ValueError("--max-shard-tokens must be > 0")
     if args.num_proc <= 0:
         raise ValueError("--num-proc must be > 0")
+    if args.index_seq_len <= 0:
+        raise ValueError("--index-seq-len must be > 0")
 
     sources = resolve_sources(args)
     add_bos = not args.no_add_bos
@@ -359,8 +367,65 @@ def main() -> None:
         encoding="utf-8",
     )
 
+    # Build Megatron-style indices at sample granularity.
+    stride = args.index_seq_len + 1
+    shard_token_counts: list[int] = []
+    for item in results:
+        manifest = json.loads(Path(item["manifest_path"]).read_text(encoding="utf-8"))
+        shards = manifest.get("shards", [])
+        if not isinstance(shards, list):
+            continue
+        for shard in shards:
+            if not isinstance(shard, dict):
+                continue
+            token_count = int(shard.get("token_count", 0))
+            shard_token_counts.append(token_count)
+
+    chunk_counts = [max(0, token_count // stride) for token_count in shard_token_counts]
+    total_samples = int(sum(chunk_counts))
+    sample_shard_ids = np.repeat(
+        np.arange(len(chunk_counts), dtype=np.int64),
+        np.asarray(chunk_counts, dtype=np.int64),
+    )
+    sample_chunk_offsets = np.empty(total_samples, dtype=np.int64)
+    cursor = 0
+    for count in chunk_counts:
+        sample_chunk_offsets[cursor : cursor + count] = np.arange(count, dtype=np.int64)
+        cursor += count
+
+    sample_index = np.stack([sample_shard_ids, sample_chunk_offsets], axis=1)
+    shuffle_index = np.arange(total_samples, dtype=np.int64)
+    if total_samples > 1:
+        rng = np.random.default_rng(args.seed)
+        rng.shuffle(shuffle_index)
+    document_index = np.arange(total_samples, dtype=np.int64)
+
+    indices_dir = output_dir / "indices" / f"seq_{args.index_seq_len}"
+    indices_dir.mkdir(parents=True, exist_ok=True)
+    sample_index_path = indices_dir / "sample_index.npy"
+    shuffle_index_path = indices_dir / f"shuffle_index_seed_{args.seed}.npy"
+    document_index_path = indices_dir / "document_index.npy"
+    np.save(sample_index_path, sample_index)
+    np.save(shuffle_index_path, shuffle_index)
+    np.save(document_index_path, document_index)
+
+    mix_manifest["index"] = {
+        "seq_len": args.index_seq_len,
+        "sample_index": str(sample_index_path.relative_to(output_dir)),
+        "shuffle_index": str(shuffle_index_path.relative_to(output_dir)),
+        "document_index": str(document_index_path.relative_to(output_dir)),
+        "total_samples": total_samples,
+        "seed": args.seed,
+    }
+    mix_manifest_path.write_text(
+        json.dumps(mix_manifest, ensure_ascii=False, indent=2) + "\n",
+        encoding="utf-8",
+    )
+
     print("=== PACKING COMPLETE ===")
     print(f"mix_manifest={mix_manifest_path}")
+    print(f"sample_index={sample_index_path}")
+    print(f"shuffle_index={shuffle_index_path}")
     print(f"total_records_seen={total_records_seen}")
     print(f"total_records_used={total_records_used}")
     print(f"total_tokens={total_tokens}")

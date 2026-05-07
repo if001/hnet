@@ -210,8 +210,6 @@ def create_packed_dataloader(
     effective_num_workers = (
         training_config.num_workers if num_workers is None else num_workers
     )
-    if start_micro_batch > 0 and effective_num_workers > 0:
-        effective_num_workers = 0
     dataset = PackedMixByteDataset(
         packed_dir=packed_dir,
         seq_len=training_config.seq_len,
@@ -769,7 +767,7 @@ def train(training_config: TrainingConfig) -> None:
                 "packed_shard_count<=1. For better worker parallelism, create more shards via --max-shard-tokens."
             )
 
-        _total_tokens, total_chunks, _ = estimate_packed_optimizer_steps(
+        _, total_chunks, _ = estimate_packed_optimizer_steps(
             training_config,
             packed_dir=packed_dir,
             shard_indices=None,
@@ -785,7 +783,7 @@ def train(training_config: TrainingConfig) -> None:
                 "validation_source_mode=packed_explicit packed_validation_data_dir=%s",
                 val_dir,
             )
-            _val_tokens, _val_chunks, _ = estimate_packed_optimizer_steps(
+            _, _val_chunks, _ = estimate_packed_optimizer_steps(
                 training_config,
                 packed_dir=val_dir,
                 shard_indices=None,
@@ -793,10 +791,6 @@ def train(training_config: TrainingConfig) -> None:
             if _val_chunks <= 0:
                 raise ValueError(
                     f"Packed validation dataset is too small: chunks={_val_chunks}"
-                )
-            if resumed_data_micro_batches > 0 and training_config.num_workers > 0:
-                logger.info(
-                    "resume_data_jump_with_workers=true forcing_train_num_workers=0 for exact packed position restore"
                 )
             train_chunks = total_chunks
             dataloader = create_packed_dataloader(
@@ -843,10 +837,6 @@ def train(training_config: TrainingConfig) -> None:
                 train_chunks,
                 val_chunks,
             )
-            if resumed_data_micro_batches > 0 and training_config.num_workers > 0:
-                logger.info(
-                    "resume_data_jump_with_workers=true forcing_train_num_workers=0 for exact packed position restore"
-                )
             dataloader = create_packed_dataloader(
                 training_config=training_config,
                 packed_dir=packed_dir,

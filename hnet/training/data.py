@@ -1,11 +1,8 @@
 import json
 import logging
-import random
-from bisect import bisect_right
 from collections.abc import Iterable, Iterator, Mapping, Sequence
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Protocol
 
 import numpy as np
 import torch
@@ -15,119 +12,8 @@ from torch.utils.data import get_worker_info
 
 from ..utils.tokenizers import ByteTokenizer
 from .config import DatasetSource
-
-TextValue = str | int | float | bool | None
-
-PREFERRED_TEXT_KEYS = (
-    "text",
-    "content",
-    "completion",
-    "response",
-    "output",
-    "answer",
-    "prompt",
-    "instruction",
-    "question",
-    "input",
-    "context",
-    "title",
-)
+from .record_formatter import DefaultRecordFormatter, RecordFormatter
 logger = logging.getLogger(__name__)
-
-
-class RecordFormatter(Protocol):
-    def format_record(self, record: Mapping[str, object]) -> str | None: ...
-
-
-def _stringify_scalar(value: TextValue) -> str:
-    if value is None:
-        return ""
-    if isinstance(value, bool):
-        return "true" if value else "false"
-    return str(value)
-
-
-def _join_message_content(messages: Sequence[object]) -> str:
-    parts: list[str] = []
-    for message in messages:
-        if not isinstance(message, Mapping):
-            continue
-        role = _stringify_scalar(message.get("role"))
-        content = _stringify_value(message.get("content"))
-        text = content.strip()
-        if not text:
-            continue
-        if role:
-            parts.append(f"{role}: {text}")
-        else:
-            parts.append(text)
-    return "\n".join(parts)
-
-
-def _stringify_mapping(value: Mapping[str, object]) -> str:
-    messages = value.get("messages")
-    if isinstance(messages, Sequence) and not isinstance(
-        messages, (str, bytes, bytearray)
-    ):
-        joined = _join_message_content(messages)
-        if joined:
-            return joined
-    if "content" in value:
-        return _stringify_value(value["content"])
-    if "text" in value:
-        return _stringify_value(value["text"])
-    try:
-        return json.dumps(dict(value), ensure_ascii=False, sort_keys=True)
-    except TypeError:
-        return ""
-
-
-def _stringify_sequence(value: Sequence[object]) -> str:
-    if not value:
-        return ""
-    if all(isinstance(item, Mapping) for item in value):
-        return _join_message_content(value)
-    parts = [_stringify_value(item).strip() for item in value]
-    return "\n".join(part for part in parts if part)
-
-
-def _stringify_value(value: object) -> str:
-    if isinstance(value, (str, int, float, bool)) or value is None:
-        return _stringify_scalar(value)
-    if isinstance(value, Mapping):
-        return _stringify_mapping(value)
-    if isinstance(value, Sequence) and not isinstance(value, (str, bytes, bytearray)):
-        return _stringify_sequence(value)
-    return ""
-
-
-@dataclass(frozen=True)
-class DefaultRecordFormatter:
-    preferred_keys: tuple[str, ...] = PREFERRED_TEXT_KEYS
-
-    def format_record(self, record: Mapping[str, object]) -> str | None:
-        ordered_values: list[str] = []
-
-        for key in self.preferred_keys:
-            if key not in record:
-                continue
-            value = _stringify_value(record[key]).strip()
-            if value:
-                ordered_values.append(value)
-
-        if not ordered_values:
-            for key, value in record.items():
-                if key.startswith("_"):
-                    continue
-                rendered = _stringify_value(value).strip()
-                if rendered:
-                    ordered_values.append(rendered)
-
-        if not ordered_values:
-            return None
-
-        deduped_values = list(dict.fromkeys(ordered_values))
-        return "\n\n".join(deduped_values)
 
 
 def _load_streaming_source(
@@ -291,7 +177,7 @@ def list_packed_shards(packed_dir: str | Path) -> list[PackedShard]:
     return _load_shards_from_mix_manifest(Path(packed_dir))
 
 
-class PackedMixByteDataset(torch.utils.data.IterableDataset):
+class PackedMixByteDataset(torch.utils.data.Dataset):
     def __init__(
         self,
         packed_dir: str | Path,
@@ -315,73 +201,95 @@ class PackedMixByteDataset(torch.utils.data.IterableDataset):
             self.shards = [
                 all_shards[i] for i in shard_indices if 0 <= int(i) < len(all_shards)
             ]
+            self._has_shard_subset = True
         else:
             self.shards = all_shards
-        self.total_chunks = sum(
-            int(max(0, shard.token_count // self.stride)) for shard in self.shards
+            self._has_shard_subset = False
+        self._chunk_counts = np.asarray(
+            [int(max(0, shard.token_count // self.stride)) for shard in self.shards],
+            dtype=np.int64,
         )
+        self.total_chunks = int(self._chunk_counts.sum())
+        self._shard_memmaps: list[np.memmap] = [
+            np.memmap(shard.bin_path, mode="r", dtype=np.uint8) for shard in self.shards
+        ]
+        self._sample_shard_ids, self._sample_chunk_offsets, self._shuffle_index = (
+            self._build_or_load_indices()
+        )
+        self.total_chunks = int(self._shuffle_index.shape[0])
+
+        self._start = min(self.start_micro_batch, self.total_chunks)
 
     def __len__(self) -> int:
-        return self.total_chunks
+        return self.total_chunks - self._start
 
-    def _iter_worker_shards(self) -> list[PackedShard]:
-        worker = get_worker_info()
-        if worker is None:
-            worker_id = 0
-            num_workers = 1
+    def _build_or_load_indices(
+        self,
+    ) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+        mix = load_mix_manifest(self.packed_dir)
+        if self._has_shard_subset:
+            index_info = None
         else:
-            worker_id = worker.id
-            num_workers = worker.num_workers
+            index_info = mix.get("index")
+        if isinstance(index_info, Mapping):
+            seq_len = index_info.get("seq_len")
+            seed = index_info.get("seed")
+            sample_index_rel = index_info.get("sample_index")
+            shuffle_index_rel = index_info.get("shuffle_index")
+            if (
+                isinstance(seq_len, int)
+                and isinstance(seed, int)
+                and isinstance(sample_index_rel, str)
+                and isinstance(shuffle_index_rel, str)
+                and seq_len == self.seq_len
+                and seed == self.seed
+            ):
+                sample_index_path = self.packed_dir / sample_index_rel
+                shuffle_index_path = self.packed_dir / shuffle_index_rel
+                if sample_index_path.exists() and shuffle_index_path.exists():
+                    sample_index = np.load(sample_index_path, mmap_mode="r")
+                    shuffle_index = np.load(shuffle_index_path, mmap_mode="r")
+                    sample_shard_ids = np.asarray(sample_index[:, 0], dtype=np.int64)
+                    sample_chunk_offsets = np.asarray(sample_index[:, 1], dtype=np.int64)
+                    shuffle_array = np.asarray(shuffle_index, dtype=np.int64)
+                    if not self.shuffle:
+                        shuffle_array = np.arange(sample_shard_ids.shape[0], dtype=np.int64)
+                    return sample_shard_ids, sample_chunk_offsets, shuffle_array
 
-        if num_workers <= 1:
-            selected = list(self.shards)
-        else:
-            selected = [
-                shard for idx, shard in enumerate(self.shards) if idx % num_workers == worker_id
-            ]
-        if self.shuffle:
-            rng = random.Random(self.seed + worker_id)
-            rng.shuffle(selected)
-        return selected
+        # Fallback: build indices at runtime.
+        shard_ids = np.repeat(
+            np.arange(len(self.shards), dtype=np.int64),
+            self._chunk_counts,
+        )
+        sample_chunk_offsets = np.empty(self.total_chunks, dtype=np.int64)
+        cursor = 0
+        for count in self._chunk_counts.tolist():
+            sample_chunk_offsets[cursor : cursor + count] = np.arange(
+                count, dtype=np.int64
+            )
+            cursor += count
+        shuffle_index = np.arange(self.total_chunks, dtype=np.int64)
+        if self.shuffle and self.total_chunks > 1:
+            rng = np.random.default_rng(self.seed)
+            rng.shuffle(shuffle_index)
+        return shard_ids, sample_chunk_offsets, shuffle_index
 
-    def _compute_worker_shard_layout(
-        self, shards: Sequence[PackedShard]
-    ) -> tuple[list[int], list[int]]:
-        shard_chunk_counts = [
-            int(max(0, shard.token_count // self.stride)) for shard in shards
-        ]
-        prefix = [0]
-        for count in shard_chunk_counts:
-            prefix.append(prefix[-1] + count)
-        return shard_chunk_counts, prefix
+    def __getitem__(self, index: int) -> dict[str, torch.Tensor]:
+        if index < 0 or index >= len(self):
+            raise IndexError(index)
 
-    def __iter__(self) -> Iterator[dict[str, torch.Tensor]]:
-        shards = self._iter_worker_shards()
-        shard_chunk_counts, prefix = self._compute_worker_shard_layout(shards)
-        worker_total_chunks = prefix[-1] if prefix else 0
-        if worker_total_chunks <= 0:
-            return
+        shuffled_sample_index = int(self._shuffle_index[self._start + index])
+        shard_idx = int(self._sample_shard_ids[shuffled_sample_index])
+        chunk_idx = int(self._sample_chunk_offsets[shuffled_sample_index])
+        start = chunk_idx * self.stride
+        end = start + self.stride
+        mm = self._shard_memmaps[shard_idx]
+        chunk = np.asarray(mm[start:end], dtype=np.int64)
 
-        worker_start = min(self.start_micro_batch, worker_total_chunks)
-        start_shard_idx = max(0, bisect_right(prefix, worker_start) - 1)
-        start_offset = worker_start - prefix[start_shard_idx]
-
-        for local_idx, shard in enumerate(shards):
-            if local_idx < start_shard_idx:
-                continue
-            if not shard.bin_path.exists():
-                continue
-            mm = np.memmap(shard.bin_path, mode="r", dtype=np.uint8)
-            chunk_count = shard_chunk_counts[local_idx]
-            local_start = start_offset if local_idx == start_shard_idx else 0
-            for chunk_idx in range(local_start, chunk_count):
-                start = chunk_idx * self.stride
-                end = start + self.stride
-                chunk = np.asarray(mm[start:end], dtype=np.int64)
-                input_ids = torch.from_numpy(chunk[:-1].copy()).long()
-                labels = torch.from_numpy(chunk[1:].copy()).long()
-                yield {
-                    "input_ids": input_ids,
-                    "labels": labels,
-                    "mask": self._mask,
-                }
+        input_ids = torch.from_numpy(chunk[:-1].copy()).long()
+        labels = torch.from_numpy(chunk[1:].copy()).long()
+        return {
+            "input_ids": input_ids,
+            "labels": labels,
+            "mask": self._mask,
+        }

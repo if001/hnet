@@ -56,6 +56,12 @@ def parse_args() -> SFTTrainConfig:
     )
 
     parser.add_argument("--seq-len", type=int, default=512)
+    parser.add_argument(
+        "--packing",
+        action=argparse.BooleanOptionalAction,
+        default=True,
+        help="Enable sample packing across examples (default: true).",
+    )
     parser.add_argument("--batch-size", type=int, default=2)
     parser.add_argument("--grad-accum-steps", type=int, default=8)
     parser.add_argument("--max-steps", type=int, default=1000)
@@ -98,6 +104,7 @@ def parse_args() -> SFTTrainConfig:
         output_dir=args.output_dir,
         chat_tokenizer_path=args.chat_tokenizer_path,
         seq_len=args.seq_len,
+        packing=args.packing,
         batch_size=args.batch_size,
         grad_accum_steps=args.grad_accum_steps,
         max_steps=args.max_steps,
@@ -133,6 +140,7 @@ def train(config: SFTTrainConfig) -> None:
 
     train_dataset = StreamingSFTByteDataset(
         seq_len=config.seq_len,
+        packing=config.packing,
         shuffle_buffer_size=config.shuffle_buffer_size,
         seed=config.seed,
         chat_tokenizer_path=config.chat_tokenizer_path,

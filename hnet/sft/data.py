@@ -16,12 +16,14 @@ class StreamingSFTByteDataset(IterableDataset):
         self,
         *,
         seq_len: int,
+        packing: bool,
         shuffle_buffer_size: int,
         seed: int,
         chat_tokenizer_path: str,
     ) -> None:
         super().__init__()
         self.seq_len = seq_len
+        self.packing = packing
         self.shuffle_buffer_size = shuffle_buffer_size
         self.seed = seed
         self.byte_tokenizer = ByteTokenizer()
@@ -56,23 +58,52 @@ class StreamingSFTByteDataset(IterableDataset):
                 yield text
 
     def __iter__(self):
-        token_buffer: list[int] = []
+        if self.packing:
+            token_buffer: list[int] = []
+            for text in self._iter_texts():
+                encoded = self.byte_tokenizer.encode(
+                    [text], add_bos=True, add_eos=True
+                )[0]["input_ids"].tolist()
+                token_buffer.extend(encoded)
 
+                while len(token_buffer) >= self.seq_len + 1:
+                    chunk = token_buffer[: self.seq_len + 1]
+                    del token_buffer[: self.seq_len + 1]
+
+                    input_ids = torch.tensor(chunk[:-1], dtype=torch.long)
+                    labels = torch.tensor(chunk[1:], dtype=torch.long)
+                    mask = torch.ones(self.seq_len, dtype=torch.bool)
+                    yield {
+                        "input_ids": input_ids,
+                        "labels": labels,
+                        "mask": mask,
+                    }
+            return
+
+        eos_id = int(self.byte_tokenizer.eos_idx)
+        max_tokens = self.seq_len + 1
         for text in self._iter_texts():
             encoded = self.byte_tokenizer.encode([text], add_bos=True, add_eos=True)[0][
                 "input_ids"
             ].tolist()
-            token_buffer.extend(encoded)
+            if len(encoded) < 2:
+                continue
 
-            while len(token_buffer) >= self.seq_len + 1:
-                chunk = token_buffer[: self.seq_len + 1]
-                del token_buffer[: self.seq_len + 1]
+            encoded = encoded[:max_tokens]
+            real_len = len(encoded) - 1
+            if real_len <= 0:
+                continue
 
-                input_ids = torch.tensor(chunk[:-1], dtype=torch.long)
-                labels = torch.tensor(chunk[1:], dtype=torch.long)
-                mask = torch.ones(self.seq_len, dtype=torch.bool)
-                yield {
-                    "input_ids": input_ids,
-                    "labels": labels,
-                    "mask": mask,
-                }
+            if len(encoded) < max_tokens:
+                encoded = encoded + [eos_id] * (max_tokens - len(encoded))
+
+            input_ids = torch.tensor(encoded[:-1], dtype=torch.long)
+            labels = torch.full((self.seq_len,), -100, dtype=torch.long)
+            labels[:real_len] = torch.tensor(encoded[1 : 1 + real_len], dtype=torch.long)
+            mask = torch.zeros(self.seq_len, dtype=torch.bool)
+            mask[:real_len] = True
+            yield {
+                "input_ids": input_ids,
+                "labels": labels,
+                "mask": mask,
+            }

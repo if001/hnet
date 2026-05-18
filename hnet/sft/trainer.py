@@ -25,6 +25,7 @@ class SFTTrainConfig:
     chat_tokenizer_path: str = "Qwen/Qwen3-0.6B"
 
     seq_len: int = 512
+    packing: bool = True
     batch_size: int = 2
     grad_accum_steps: int = 8
     max_steps: int = 1000

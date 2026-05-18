@@ -23,6 +23,12 @@ def parse_args() -> argparse.Namespace:
         default=512,
         help="Training sequence length (context length).",
     )
+    parser.add_argument(
+        "--packing",
+        action=argparse.BooleanOptionalAction,
+        default=True,
+        help="Enable sample packing across examples (default: true).",
+    )
     parser.add_argument("--batch-size", type=int, default=2)
     parser.add_argument("--grad-accum-steps", type=int, default=8)
     parser.add_argument("--num-workers", type=int, default=0)
@@ -43,6 +49,7 @@ def main() -> None:
 
     dataset = StreamingSFTByteDataset(
         seq_len=args.context_len,
+        packing=args.packing,
         shuffle_buffer_size=args.shuffle_buffer_size,
         seed=args.seed,
         chat_tokenizer_path=args.chat_tokenizer_path,
@@ -64,7 +71,7 @@ def main() -> None:
         f"config context_len={args.context_len} batch_size={args.batch_size} "
         f"grad_accum_steps={args.grad_accum_steps} num_workers={args.num_workers} "
         f"shuffle_buffer_size={args.shuffle_buffer_size} seed={args.seed} "
-        f"chat_tokenizer_path={args.chat_tokenizer_path}"
+        f"chat_tokenizer_path={args.chat_tokenizer_path} packing={args.packing}"
     )
     print("dataset_source=hnet/sft/dataset.py (sample mix)")
 

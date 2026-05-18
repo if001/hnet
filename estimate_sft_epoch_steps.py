@@ -5,7 +5,7 @@ from math import ceil
 import torch
 from torch.utils.data import DataLoader
 
-from hnet.sft.trainer import StreamingSFTByteDataset
+from hnet.sft.data import StreamingSFTByteDataset
 
 
 def parse_args() -> argparse.Namespace:
@@ -27,6 +27,12 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--grad-accum-steps", type=int, default=8)
     parser.add_argument("--num-workers", type=int, default=0)
     parser.add_argument("--shuffle-buffer-size", type=int, default=512)
+    parser.add_argument(
+        "--chat-tokenizer-path",
+        type=str,
+        default="Qwen/Qwen3-0.6B",
+        help="Tokenizer used for chat template rendering.",
+    )
     parser.add_argument("--seed", type=int, default=42)
     parser.add_argument("--log-every", type=int, default=200)
     return parser.parse_args()
@@ -38,22 +44,27 @@ def main() -> None:
     dataset = StreamingSFTByteDataset(
         seq_len=args.context_len,
         shuffle_buffer_size=args.shuffle_buffer_size,
-        use_sample_dataset=True,
-        sources=None,
         seed=args.seed,
+        chat_tokenizer_path=args.chat_tokenizer_path,
     )
+    dataloader_kwargs: dict[str, object] = {}
+    if args.num_workers > 0:
+        dataloader_kwargs["persistent_workers"] = True
+        dataloader_kwargs["prefetch_factor"] = 2
     dataloader = DataLoader(
         dataset,
         batch_size=args.batch_size,
         num_workers=args.num_workers,
         pin_memory=torch.cuda.is_available(),
+        **dataloader_kwargs,
     )
 
     print("estimating_sft_epoch_steps=true")
     print(
         f"config context_len={args.context_len} batch_size={args.batch_size} "
         f"grad_accum_steps={args.grad_accum_steps} num_workers={args.num_workers} "
-        f"shuffle_buffer_size={args.shuffle_buffer_size} seed={args.seed}"
+        f"shuffle_buffer_size={args.shuffle_buffer_size} seed={args.seed} "
+        f"chat_tokenizer_path={args.chat_tokenizer_path}"
     )
     print("dataset_source=hnet/sft/dataset.py (sample mix)")
 

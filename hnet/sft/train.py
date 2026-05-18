@@ -16,9 +16,9 @@ from hnet.models.config_io import save_hnet_config
 from hnet.sft.trainer import (
     HNetSFTTrainer,
     SFTTrainConfig,
-    StreamingSFTByteDataset,
     build_training_arguments,
 )
+from hnet.sft.data import StreamingSFTByteDataset
 
 
 def extract_model_state_dict(checkpoint: object) -> Mapping[str, torch.Tensor]:

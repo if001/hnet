@@ -231,6 +231,7 @@ SOURCES_JA8_EN1_CODE1_SMALL: list[DatasetSource] = [
 
 ## 8:1:1
 ## byte換算で12B
+## 7_346_735_500(7B)
 SOURCES_JA8_EN1_CODE1_20: list[DatasetSource] = [
     DatasetSource(
         name="hotchpotch/fineweb-2-edu-japanese",
@@ -408,7 +409,7 @@ SOURCES_JA8_EN1_CODE1_100: list[DatasetSource] = [
 ]
 
 ## 8:1:1
-## byte換算で
+## byte換算で60_830_092_012(60B)
 SOURCES_JA8_EN1_CODE1_200: list[DatasetSource] = [
     DatasetSource(
         name="hotchpotch/fineweb-2-edu-japanese",  # max: 120_000_000

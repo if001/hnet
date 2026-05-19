@@ -393,7 +393,8 @@ def build_sft_train_dataset(cfg: SFTDataConfig) -> HFIterableDataset:
         buffer_size=cfg.shuffle_buffer_size, seed=cfg.seed
     )
     llm_jp_instructions = llm_jp_instructions.map(
-        lambda ex: _map_llm_jp_instructions(ex, cfg.system_prompt)
+        lambda ex: _map_llm_jp_instructions(ex, cfg.system_prompt),
+        remove_columns=list(llm_jp_instructions.features.keys()),
     )
     llm_jp_instructions = llm_jp_instructions.filter(_valid_example).take(300)
 
@@ -443,10 +444,6 @@ def build_sft_train_dataset(cfg: SFTDataConfig) -> HFIterableDataset:
 
     # Japanese pool = 8/10
     # 60k : 35k : 15k
-    print(magpie)
-    print(jamard)
-    print(oasst2)
-    print(llm_jp_instructions)
     ja_pool = interleave_datasets(
         [magpie, jamard, oasst2, llm_jp_instructions],
         probabilities=[0.5, 0.3, 0.1, 0.1],

@@ -287,6 +287,24 @@ def _map_oasst2(example: Mapping[str, object], system_prompt: str) -> dict[str, 
     return {"messages": messages}
 
 
+def _map_llm_jp_instructions(
+    example: Mapping[str, object], system_prompt: str
+) -> dict[str, object]:
+    text = example["text"]
+    output = example["output"]
+    user_input = f"### 指示\n質問に対して、回答を出力してください。\n\n### 入力: \n{text}\n### 応答:\n"
+    messages = [
+        {"role": "user", "content": user_input},
+        {"role": "assistant", "content": output},
+    ]
+    messages = _prepend_qwen3_system(
+        messages,
+        think_mode=False,
+        system_prompt=system_prompt,
+    )
+    return {"messages": messages}
+
+
 def _map_jamard(example: Mapping[str, object], system_prompt: str) -> dict[str, object]:
     messages = _normalize_messages(example["messages"])
 
@@ -370,6 +388,15 @@ def build_sft_train_dataset(cfg: SFTDataConfig) -> HFIterableDataset:
     oasst2 = oasst2.map(lambda ex: _map_oasst2(ex, cfg.system_prompt))
     oasst2 = oasst2.filter(_valid_example).take(cfg.oasst2_take)
 
+    llm_jp_instructions = _load_stream("llm-jp/llm-jp-instructions")
+    llm_jp_instructions = llm_jp_instructions.shuffle(
+        buffer_size=cfg.shuffle_buffer_size, seed=cfg.seed
+    )
+    llm_jp_instructions = llm_jp_instructions.map(
+        lambda ex: _map_llm_jp_instructions(ex, cfg.system_prompt)
+    )
+    llm_jp_instructions = llm_jp_instructions.filter(_valid_example).take(300)
+
     # 3) English chat from Aya
     aya = _load_stream("CohereLabs/aya_dataset")
     aya = aya.filter(lambda ex: str(ex["language_code"]).lower() in {"eng", "en"})
@@ -416,9 +443,13 @@ def build_sft_train_dataset(cfg: SFTDataConfig) -> HFIterableDataset:
 
     # Japanese pool = 8/10
     # 60k : 35k : 15k
+    print(magpie)
+    print(jamard)
+    print(oasst2)
+    print(llm_jp_instructions)
     ja_pool = interleave_datasets(
-        [magpie, jamard, oasst2],
-        probabilities=[0.5455, 0.3182, 0.1363],
+        [magpie, jamard, oasst2, llm_jp_instructions],
+        probabilities=[0.5, 0.3, 0.1, 0.1],
         seed=cfg.seed,
         stopping_strategy="first_exhausted",
     )

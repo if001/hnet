@@ -5,7 +5,7 @@ import re
 from typing import Iterator, Mapping, Sequence
 import json
 
-from datasets import interleave_datasets, load_dataset
+from datasets import interleave_datasets, load_dataset, concatenate_datasets
 from datasets.iterable_dataset import IterableDataset as HFIterableDataset
 
 
@@ -369,24 +369,48 @@ def _load_stream(
     )
 
 
-def build_sft_train_dataset(cfg: SFTDataConfig) -> HFIterableDataset:
+def _load(
+    dataset_name: str,
+    split: str = "train",
+    *,
+    trust_remote_code: bool = False,
+):
+    return load_dataset(
+        dataset_name,
+        split=split,
+        streaming=False,
+        trust_remote_code=trust_remote_code,
+    )
+
+
+def _check(name, ds, limit=5):
+    print(name)
+    head_5 = ds.take(limit)
+    for example in head_5:
+        print(example)
+
+
+def build_sft_train_dataset(cfg: SFTDataConfig, interleave=False) -> HFIterableDataset:
     # 1) Japanese chat
     magpie = _load_stream("llm-jp/magpie-sft-v1.0")
     magpie = magpie.shuffle(buffer_size=cfg.shuffle_buffer_size, seed=cfg.seed)
     magpie = magpie.map(lambda ex: _map_magpie(ex, cfg.system_prompt))
     magpie = magpie.filter(_valid_example).take(cfg.magpie_take)
+    _check("magpie", magpie)
 
     # 2) Japanese reasoning
     jamard = _load_stream("if001/elyza_JaMARD_fork")
     jamard = jamard.shuffle(buffer_size=cfg.shuffle_buffer_size, seed=cfg.seed)
     jamard = jamard.map(lambda ex: _map_jamard(ex, cfg.system_prompt))
     jamard = jamard.filter(_valid_example).take(cfg.jamard_take)
+    _check("jamard", jamard)
 
     # 3) Japanese chat supplement: oasst2-33k-ja
     oasst2 = _load_stream("llm-jp/oasst2-33k-ja")
     oasst2 = oasst2.shuffle(buffer_size=cfg.shuffle_buffer_size, seed=cfg.seed)
     oasst2 = oasst2.map(lambda ex: _map_oasst2(ex, cfg.system_prompt))
     oasst2 = oasst2.filter(_valid_example).take(cfg.oasst2_take)
+    _check("oasst2", oasst2)
 
     llm_jp_instructions = _load_stream("llm-jp/llm-jp-instructions")
     llm_jp_instructions = llm_jp_instructions.shuffle(
@@ -397,6 +421,7 @@ def build_sft_train_dataset(cfg: SFTDataConfig) -> HFIterableDataset:
         remove_columns=list(llm_jp_instructions.features.keys()),
     )
     llm_jp_instructions = llm_jp_instructions.filter(_valid_example).take(300)
+    _check("llm_jp_instructions", llm_jp_instructions)
 
     # 3) English chat from Aya
     aya = _load_stream("CohereLabs/aya_dataset")
@@ -404,12 +429,14 @@ def build_sft_train_dataset(cfg: SFTDataConfig) -> HFIterableDataset:
     aya = aya.shuffle(buffer_size=cfg.shuffle_buffer_size, seed=cfg.seed)
     aya = aya.map(lambda ex: _map_aya_english(ex, cfg.system_prompt))
     aya = aya.filter(_valid_example).take(cfg.aya_en_take)
+    _check("aya", aya)
 
     # 4) Code
     coding = _load_stream("llm-jp/Synthetic-JP-EN-Coding-Dataset")
     coding = coding.shuffle(buffer_size=cfg.shuffle_buffer_size, seed=cfg.seed)
     coding = coding.map(lambda ex: _map_coding(ex, cfg.system_prompt))
     coding = coding.filter(_valid_example).take(cfg.coding_take)
+    _check("coding", coding)
 
     xlam = _load_stream("Salesforce/xlam-function-calling-60k")
     xlam = xlam.shuffle(buffer_size=cfg.shuffle_buffer_size, seed=cfg.seed)
@@ -418,6 +445,7 @@ def build_sft_train_dataset(cfg: SFTDataConfig) -> HFIterableDataset:
         remove_columns=list(xlam.features.keys()),
     )
     xlam = xlam.filter(_valid_example).take(cfg.xlam_take)
+    _check("xlam", xlam)
 
     toolace = _load_stream("Team-ACE/ToolACE")
     toolace = toolace.shuffle(buffer_size=cfg.shuffle_buffer_size, seed=cfg.seed)
@@ -426,6 +454,7 @@ def build_sft_train_dataset(cfg: SFTDataConfig) -> HFIterableDataset:
         remove_columns=list(toolace.features.keys()),
     )
     toolace = toolace.filter(_valid_example).take(cfg.toolace_take)
+    _check("toolace", toolace)
 
     apigen_mt = _load_stream("Salesforce/APIGen-MT-5k")
     apigen_mt = apigen_mt.shuffle(buffer_size=cfg.shuffle_buffer_size, seed=cfg.seed)
@@ -434,27 +463,32 @@ def build_sft_train_dataset(cfg: SFTDataConfig) -> HFIterableDataset:
         remove_columns=list(apigen_mt.features.keys()),
     )
     apigen_mt = apigen_mt.filter(_valid_example).take(cfg.apigen_mt_take)
+    _check("apigen_mt", apigen_mt)
 
-    tool_pool = interleave_datasets(
-        [xlam, toolace, apigen_mt],
-        probabilities=[0.60, 0.25, 0.15],
-        seed=cfg.seed,
-        stopping_strategy="first_exhausted",
-    )
-
-    # Japanese pool = 8/10
-    # 60k : 35k : 15k
-    ja_pool = interleave_datasets(
-        [magpie, jamard, oasst2, llm_jp_instructions],
-        probabilities=[0.5, 0.3, 0.1, 0.1],
-        seed=cfg.seed,
-        stopping_strategy="first_exhausted",
-    )
-
-    mixed = interleave_datasets(
-        [ja_pool, aya, coding, tool_pool],
-        probabilities=[0.76, 0.09, 0.10, 0.05],
-        seed=cfg.seed,
-        stopping_strategy="first_exhausted",
-    )
-    return mixed
+    if interleave:
+        tool_pool = interleave_datasets(
+            [xlam, toolace, apigen_mt],
+            probabilities=[0.60, 0.25, 0.15],
+            seed=cfg.seed,
+            stopping_strategy="first_exhausted",
+        )
+        # Japanese pool = 8/10
+        # 60k : 35k : 15k
+        # ja_pool = interleave_datasets(
+        #     [magpie, jamard, oasst2],
+        #     probabilities=[0.5, 0.3, 0.1],
+        #     seed=cfg.seed,
+        #     stopping_strategy="first_exhausted",
+        # )
+        ja_pool = concatenate_datasets([magpie, jamard, oasst2, llm_jp_instructions])
+        mixed = interleave_datasets(
+            [ja_pool, aya, coding, tool_pool],
+            probabilities=[0.76, 0.09, 0.10, 0.05],
+            seed=cfg.seed,
+            stopping_strategy="first_exhausted",
+        )
+        return mixed
+    tool_pool = concatenate_datasets([xlam, toolace, apigen_mt])
+    ja_pool = concatenate_datasets([magpie, jamard, oasst2, llm_jp_instructions])
+    mixed = concatenate_datasets([ja_pool, aya, coding, tool_pool])
+    return mixed.shuffle(seed=42)

@@ -387,7 +387,7 @@ def _check(name, ds, limit=5):
     print(name)
     head_5 = ds.take(limit)
     for example in head_5:
-        print(example)
+        print(example["messages"])
 
 
 def build_sft_train_dataset(cfg: SFTDataConfig, interleave=False) -> HFIterableDataset:
@@ -420,7 +420,7 @@ def build_sft_train_dataset(cfg: SFTDataConfig, interleave=False) -> HFIterableD
         lambda ex: _map_llm_jp_instructions(ex, cfg.system_prompt),
         remove_columns=list(llm_jp_instructions.features.keys()),
     )
-    llm_jp_instructions = llm_jp_instructions.filter(_valid_example).take(300)
+    llm_jp_instructions = llm_jp_instructions.filter(_valid_example)
     _check("llm_jp_instructions", llm_jp_instructions)
 
     # 3) English chat from Aya
@@ -490,5 +490,6 @@ def build_sft_train_dataset(cfg: SFTDataConfig, interleave=False) -> HFIterableD
         return mixed
     tool_pool = concatenate_datasets([xlam, toolace, apigen_mt])
     ja_pool = concatenate_datasets([magpie, jamard, oasst2, llm_jp_instructions])
-    mixed = concatenate_datasets([ja_pool, aya, coding, tool_pool])
+    # mixed = concatenate_datasets([ja_pool, aya, coding, tool_pool])
+    mixed = concatenate_datasets([ja_pool, aya, coding])
     return mixed.shuffle(seed=42)

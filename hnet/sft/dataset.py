@@ -88,7 +88,7 @@ def _cfg_with_mix_overrides(cfg: SFTDataConfig) -> SFTDataConfig:
     payload = json.loads(Path(cfg.mix_config_path).read_text(encoding="utf-8"))
     if not isinstance(payload, Mapping):
         raise ValueError("mix config must be a JSON object")
-
+    print("overwrite mix config", cfg.mix_config_path)
     allowed = {
         "shuffle_buffer_size",
         "seed",

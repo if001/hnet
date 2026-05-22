@@ -20,6 +20,7 @@ class StreamingSFTByteDataset(IterableDataset):
         shuffle_buffer_size: int,
         seed: int,
         chat_tokenizer_path: str,
+        mix_config_path: str | None = None,
     ) -> None:
         super().__init__()
         self.seq_len = seq_len
@@ -28,6 +29,7 @@ class StreamingSFTByteDataset(IterableDataset):
         self.seed = seed
         self.byte_tokenizer = ByteTokenizer()
         self.chat_tokenizer_path = chat_tokenizer_path
+        self.mix_config_path = mix_config_path
         self._chat_tokenizer: PreTrainedTokenizerBase | None = None
 
     def _get_chat_tokenizer(self) -> PreTrainedTokenizerBase:
@@ -41,6 +43,7 @@ class StreamingSFTByteDataset(IterableDataset):
         sample_cfg = SFTDataConfig(
             seed=self.seed,
             shuffle_buffer_size=self.shuffle_buffer_size,
+            mix_config_path=self.mix_config_path,
         )
         dataset = build_sft_train_dataset(sample_cfg)
         tokenizer = self._get_chat_tokenizer()

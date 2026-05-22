@@ -19,6 +19,7 @@ from hnet.sft.trainer import (
     build_training_arguments,
 )
 from hnet.sft.data import StreamingSFTByteDataset
+from hnet.sft.epoch_steps import estimate_sft_epoch_steps
 
 
 def extract_model_state_dict(checkpoint: object) -> Mapping[str, torch.Tensor]:
@@ -54,6 +55,12 @@ def parse_args() -> SFTTrainConfig:
         default="Qwen/Qwen3-0.6B",
         help="Tokenizer used for Qwen3 chat template rendering.",
     )
+    parser.add_argument(
+        "--mix-config-path",
+        type=str,
+        default=None,
+        help="Optional JSON path to override SFT dataset take counts / seed / shuffle buffer.",
+    )
 
     parser.add_argument("--seq-len", type=int, default=512)
     parser.add_argument(
@@ -64,7 +71,12 @@ def parse_args() -> SFTTrainConfig:
     )
     parser.add_argument("--batch-size", type=int, default=2)
     parser.add_argument("--grad-accum-steps", type=int, default=8)
-    parser.add_argument("--max-steps", type=int, default=1000)
+    parser.add_argument(
+        "--max-steps",
+        type=int,
+        default=None,
+        help="Maximum optimizer steps. If omitted, train for exactly 1 epoch.",
+    )
 
     parser.add_argument("--learning-rate", type=float, default=1e-4)
     parser.add_argument("--warmup-steps", type=int, default=100)
@@ -103,6 +115,7 @@ def parse_args() -> SFTTrainConfig:
         pretrained_model_path=args.pretrained_model_path,
         output_dir=args.output_dir,
         chat_tokenizer_path=args.chat_tokenizer_path,
+        mix_config_path=args.mix_config_path,
         seq_len=args.seq_len,
         packing=args.packing,
         batch_size=args.batch_size,
@@ -144,9 +157,31 @@ def train(config: SFTTrainConfig) -> None:
         shuffle_buffer_size=config.shuffle_buffer_size,
         seed=config.seed,
         chat_tokenizer_path=config.chat_tokenizer_path,
+        mix_config_path=config.mix_config_path,
     )
 
-    training_args = build_training_arguments(config)
+    effective_max_steps = config.max_steps
+    if effective_max_steps is None:
+        estimate = estimate_sft_epoch_steps(
+            seq_len=config.seq_len,
+            packing=config.packing,
+            batch_size=config.batch_size,
+            grad_accum_steps=config.grad_accum_steps,
+            num_workers=config.num_workers,
+            shuffle_buffer_size=config.shuffle_buffer_size,
+            seed=config.seed,
+            chat_tokenizer_path=config.chat_tokenizer_path,
+            mix_config_path=config.mix_config_path,
+        )
+        effective_max_steps = estimate.optimizer_steps
+        print(
+            "auto_epoch_steps "
+            f"micro_batches={estimate.micro_batches} "
+            f"samples={estimate.samples} "
+            f"optimizer_steps={estimate.optimizer_steps}"
+        )
+
+    training_args = build_training_arguments(config, max_steps=effective_max_steps)
     trainer = HNetSFTTrainer(
         model=model,
         args=training_args,

@@ -23,12 +23,13 @@ class SFTTrainConfig:
     pretrained_model_path: str
     output_dir: str = "artifacts/hnet_sft"
     chat_tokenizer_path: str = "Qwen/Qwen3-0.6B"
+    mix_config_path: str | None = None
 
     seq_len: int = 512
     packing: bool = True
     batch_size: int = 2
     grad_accum_steps: int = 8
-    max_steps: int = 1000
+    max_steps: int | None = None
 
     learning_rate: float = 1e-4
     warmup_steps: int = 100
@@ -135,12 +136,18 @@ class HNetSFTTrainer(Trainer):
         return self.optimizer
 
 
-def build_training_arguments(config: SFTTrainConfig) -> TrainingArguments:
+def build_training_arguments(
+    config: SFTTrainConfig, *, max_steps: int | None = None
+) -> TrainingArguments:
+    effective_max_steps = config.max_steps if max_steps is None else max_steps
+    if effective_max_steps is None:
+        raise ValueError("max_steps must be set before building TrainingArguments")
+
     return TrainingArguments(
         output_dir=config.output_dir,
         per_device_train_batch_size=config.batch_size,
         gradient_accumulation_steps=config.grad_accum_steps,
-        max_steps=config.max_steps,
+        max_steps=effective_max_steps,
         learning_rate=config.learning_rate,
         warmup_steps=config.warmup_steps,
         weight_decay=config.weight_decay,

@@ -4,8 +4,9 @@ from dataclasses import dataclass
 import re
 from typing import Iterator, Mapping, Sequence
 import json
+from pathlib import Path
 
-from datasets import interleave_datasets, load_dataset, concatenate_datasets
+from datasets import interleave_datasets, load_dataset
 from datasets.iterable_dataset import IterableDataset as HFIterableDataset
 
 
@@ -19,36 +20,16 @@ class SFTDataConfig:
     max_length: int = 2048
     num_workers: int = 0
     seed: int = 42
+    mix_config_path: str | None = None
 
     # Qwen3-style system prompt
     system_prompt: str = "You are a helpful assistant."
 
-    # example数ベースの概算比率
-    # JA : EN : CODE = 8 : 1 : 1
-    ## 1. default (magpie,jamard, oasst2) = (4, 2.3, 1)
-    # magpie_take: int = 60_000
-    # jamard_take: int = 35_000
-    # oasst2_take: int = 15_000
-
-    ## 2. jamard多め (magpie,jamard, oasst2) = (1, 6, 4)
-    magpie_take: int = 10_000
-    jamard_take: int = 60_000
-    oasst2_take: int = 40_000
-
-    ## 3. jamard多め (magpie,jamard, oasst2) = (1, 18, 1)
-    magpie_take: int = 5_000
-    jamard_take: int = 90_000
-    oasst2_take: int = 5_000
-
-    ## 4. バランス (magpie,jamard, oasst2) = (1, 1, 1)
-    magpie_take: int = 35_000
-    jamard_take: int = 35_000
-    oasst2_take: int = 35_000
-
-    ## 5. バランス2 (magpie,jamard, oasst2) = (1, 1, 1)
+    # example数ベースの概算比率（必要に応じて mix_config_path で上書き）
     magpie_take: int = 50_000
     jamard_take: int = 50_000
     oasst2_take: int = 1_000
+    llm_jp_instructions_take: int = 10_000
 
     aya_en_take: int = 15_000
     coding_take: int = 15_000
@@ -57,6 +38,80 @@ class SFTDataConfig:
     xlam_take: int = 6_000
     toolace_take: int = 2_500
     apigen_mt_take: int = 1_500
+
+
+def _safe_probs_from_takes(takes: Sequence[int]) -> list[float]:
+    values = [max(0, int(x)) for x in takes]
+    total = sum(values)
+    if total <= 0:
+        raise ValueError(f"All take values are non-positive: {takes}")
+    return [v / total for v in values]
+
+
+def _interleave_nonzero(
+    datasets: Sequence[HFIterableDataset],
+    takes: Sequence[int],
+    *,
+    seed: int,
+    stopping_strategy: str = "first_exhausted",
+) -> HFIterableDataset:
+    if len(datasets) != len(takes):
+        raise ValueError("datasets and takes must have the same length")
+    selected: list[HFIterableDataset] = []
+    selected_takes: list[int] = []
+    for ds, take in zip(datasets, takes):
+        t = max(0, int(take))
+        if t <= 0:
+            continue
+        selected.append(ds)
+        selected_takes.append(t)
+    if not selected:
+        raise ValueError("All datasets were disabled by take=0")
+    if len(selected) == 1:
+        return selected[0]
+    probs = _safe_probs_from_takes(selected_takes)
+    return interleave_datasets(
+        selected,
+        probabilities=probs,
+        seed=seed,
+        stopping_strategy=stopping_strategy,
+    )
+
+
+def _cfg_with_mix_overrides(cfg: SFTDataConfig) -> SFTDataConfig:
+    if not cfg.mix_config_path:
+        return cfg
+    payload = json.loads(Path(cfg.mix_config_path).read_text(encoding="utf-8"))
+    if not isinstance(payload, Mapping):
+        raise ValueError("mix config must be a JSON object")
+
+    allowed = {
+        "shuffle_buffer_size",
+        "seed",
+        "magpie_take",
+        "jamard_take",
+        "oasst2_take",
+        "llm_jp_instructions_take",
+        "aya_en_take",
+        "coding_take",
+        "xlam_take",
+        "toolace_take",
+        "apigen_mt_take",
+    }
+    updates: dict[str, int] = {}
+    for key, value in payload.items():
+        if key not in allowed:
+            continue
+        if key in {"shuffle_buffer_size", "seed"}:
+            updates[key] = int(value)
+        else:
+            updates[key] = max(0, int(value))
+    return SFTDataConfig(
+        **{
+            **cfg.__dict__,
+            **updates,
+        }
+    )
 
 
 def _map_toolace(
@@ -390,27 +445,15 @@ def _load_stream(
     )
 
 
-def _load(
-    dataset_name: str,
-    split: str = "train",
-    *,
-    trust_remote_code: bool = False,
-):
-    return load_dataset(
-        dataset_name,
-        split=split,
-        streaming=False,
-        trust_remote_code=trust_remote_code,
-    )
-
-
 def _check(name, ds, limit=5):
     head_5 = ds.take(limit)
     for example in head_5:
         print(name, ": ", example["messages"])
 
 
-def build_sft_train_dataset(cfg: SFTDataConfig, interleave=False) -> HFIterableDataset:
+def build_sft_train_dataset(cfg: SFTDataConfig) -> HFIterableDataset:
+    cfg = _cfg_with_mix_overrides(cfg)
+
     # 1) Japanese chat
     magpie = _load_stream("llm-jp/magpie-sft-v1.0")
     magpie = magpie.shuffle(buffer_size=cfg.shuffle_buffer_size, seed=cfg.seed)
@@ -440,7 +483,9 @@ def build_sft_train_dataset(cfg: SFTDataConfig, interleave=False) -> HFIterableD
         lambda ex: _map_llm_jp_instructions(ex, cfg.system_prompt),
         remove_columns=list(llm_jp_instructions.features.keys()),
     )
-    llm_jp_instructions = llm_jp_instructions.filter(_valid_example)
+    llm_jp_instructions = llm_jp_instructions.filter(_valid_example).take(
+        cfg.llm_jp_instructions_take
+    )
     _check("llm_jp_instructions", llm_jp_instructions)
 
     # 3) English chat from Aya
@@ -456,7 +501,7 @@ def build_sft_train_dataset(cfg: SFTDataConfig, interleave=False) -> HFIterableD
     coding = coding.shuffle(buffer_size=cfg.shuffle_buffer_size, seed=cfg.seed)
     coding = coding.map(lambda ex: _map_coding(ex, cfg.system_prompt))
     coding = coding.filter(_valid_example).take(cfg.coding_take)
-    _check("coding", coding)
+    # _check("coding", coding)
 
     xlam = _load_stream("Salesforce/xlam-function-calling-60k")
     xlam = xlam.shuffle(buffer_size=cfg.shuffle_buffer_size, seed=cfg.seed)
@@ -483,34 +528,35 @@ def build_sft_train_dataset(cfg: SFTDataConfig, interleave=False) -> HFIterableD
         remove_columns=list(apigen_mt.features.keys()),
     )
     apigen_mt = apigen_mt.filter(_valid_example).take(cfg.apigen_mt_take)
-    # _check("apigen_mt", apigen_mt)
 
-    if interleave:
-        tool_pool = interleave_datasets(
-            [xlam, toolace, apigen_mt],
-            probabilities=[0.60, 0.25, 0.15],
-            seed=cfg.seed,
-            stopping_strategy="first_exhausted",
-        )
-        # Japanese pool = 8/10
-        # 60k : 35k : 15k
-        # ja_pool = interleave_datasets(
-        #     [magpie, jamard, oasst2],
-        #     probabilities=[0.5, 0.3, 0.1],
-        #     seed=cfg.seed,
-        #     stopping_strategy="first_exhausted",
-        # )
-        ja_pool = concatenate_datasets([magpie, jamard, oasst2, llm_jp_instructions])
-        mixed = interleave_datasets(
-            [ja_pool, aya, coding, tool_pool],
-            probabilities=[0.76, 0.09, 0.10, 0.05],
-            seed=cfg.seed,
-            stopping_strategy="first_exhausted",
-        )
-        return mixed
-    # tool_pool = concatenate_datasets([xlam, toolace, apigen_mt])
-    ja_pool = concatenate_datasets([magpie, jamard, oasst2, llm_jp_instructions])
-    # mixed = concatenate_datasets([ja_pool, aya, coding, tool_pool])
-    # mixed = concatenate_datasets([ja_pool, aya, coding])
-    mixed = concatenate_datasets([ja_pool, aya])
-    return mixed.shuffle(seed=42)
+    tool_pool = _interleave_nonzero(
+        [xlam, toolace, apigen_mt],
+        [cfg.xlam_take, cfg.toolace_take, cfg.apigen_mt_take],
+        seed=cfg.seed,
+    )
+
+    ja_pool = _interleave_nonzero(
+        [magpie, jamard, oasst2, llm_jp_instructions],
+        [
+            cfg.magpie_take,
+            cfg.jamard_take,
+            cfg.oasst2_take,
+            cfg.llm_jp_instructions_take,
+        ],
+        seed=cfg.seed,
+    )
+
+    mixed = _interleave_nonzero(
+        [ja_pool, aya, coding, tool_pool],
+        [
+            cfg.magpie_take
+            + cfg.jamard_take
+            + cfg.oasst2_take
+            + cfg.llm_jp_instructions_take,
+            cfg.aya_en_take,
+            cfg.coding_take,
+            cfg.xlam_take + cfg.toolace_take + cfg.apigen_mt_take,
+        ],
+        seed=cfg.seed,
+    )
+    return mixed

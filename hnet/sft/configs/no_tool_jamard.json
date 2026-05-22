@@ -1,0 +1,13 @@
+{
+  "seed": 123,
+  "shuffle_buffer_size": 20000,
+  "magpie_take": 5000,
+  "jamard_take": 90000,
+  "oasst2_take": 5000,
+  "llm_jp_instructions_take": 300,
+  "aya_en_take": 12000,
+  "coding_take": 15000,
+  "xlam_take": 0,
+  "toolace_take": 0,
+  "apigen_mt_take": 0
+}

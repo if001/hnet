@@ -25,25 +25,30 @@ class SFTDataConfig:
 
     # example数ベースの概算比率
     # JA : EN : CODE = 8 : 1 : 1
-    ## default (magpie,jamard, oasst2) = (4, 2.3, 1)
+    ## 1. default (magpie,jamard, oasst2) = (4, 2.3, 1)
     # magpie_take: int = 60_000
     # jamard_take: int = 35_000
     # oasst2_take: int = 15_000
 
-    ## jamard多め (magpie,jamard, oasst2) = (1, 6, 4)
+    ## 2. jamard多め (magpie,jamard, oasst2) = (1, 6, 4)
     magpie_take: int = 10_000
     jamard_take: int = 60_000
     oasst2_take: int = 40_000
 
-    ## jamard多め (magpie,jamard, oasst2) = (1, 18, 1)
+    ## 3. jamard多め (magpie,jamard, oasst2) = (1, 18, 1)
     magpie_take: int = 5_000
     jamard_take: int = 90_000
     oasst2_take: int = 5_000
 
-    ## バランス (magpie,jamard, oasst2) = (1, 1, 1.1)
+    ## 4. バランス (magpie,jamard, oasst2) = (1, 1, 1)
     magpie_take: int = 35_000
     jamard_take: int = 35_000
-    oasst2_take: int = 40_000
+    oasst2_take: int = 35_000
+
+    ## 5. バランス2 (magpie,jamard, oasst2) = (1, 1, 1)
+    magpie_take: int = 50_000
+    jamard_take: int = 50_000
+    oasst2_take: int = 1_000
 
     aya_en_take: int = 15_000
     coding_take: int = 15_000
@@ -506,5 +511,6 @@ def build_sft_train_dataset(cfg: SFTDataConfig, interleave=False) -> HFIterableD
     # tool_pool = concatenate_datasets([xlam, toolace, apigen_mt])
     ja_pool = concatenate_datasets([magpie, jamard, oasst2, llm_jp_instructions])
     # mixed = concatenate_datasets([ja_pool, aya, coding, tool_pool])
-    mixed = concatenate_datasets([ja_pool, aya, coding])
+    # mixed = concatenate_datasets([ja_pool, aya, coding])
+    mixed = concatenate_datasets([ja_pool, aya])
     return mixed.shuffle(seed=42)

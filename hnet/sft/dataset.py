@@ -25,10 +25,26 @@ class SFTDataConfig:
 
     # example数ベースの概算比率
     # JA : EN : CODE = 8 : 1 : 1
-    # JA = magpie + JaMARD
-    magpie_take: int = 60_000
+    ## default (magpie,jamard, oasst2) = (4, 2.3, 1)
+    # magpie_take: int = 60_000
+    # jamard_take: int = 35_000
+    # oasst2_take: int = 15_000
+
+    ## jamard多め (magpie,jamard, oasst2) = (1, 6, 4)
+    magpie_take: int = 10_000
+    jamard_take: int = 60_000
+    oasst2_take: int = 40_000
+
+    ## jamard多め (magpie,jamard, oasst2) = (1, 18, 1)
+    magpie_take: int = 5_000
+    jamard_take: int = 90_000
+    oasst2_take: int = 5_000
+
+    ## バランス (magpie,jamard, oasst2) = (1, 1, 1.1)
+    magpie_take: int = 35_000
     jamard_take: int = 35_000
-    oasst2_take: int = 15_000
+    oasst2_take: int = 40_000
+
     aya_en_take: int = 15_000
     coding_take: int = 15_000
 
@@ -384,10 +400,9 @@ def _load(
 
 
 def _check(name, ds, limit=5):
-    print(name)
     head_5 = ds.take(limit)
     for example in head_5:
-        print(example["messages"])
+        print(name, ": ", example["messages"])
 
 
 def build_sft_train_dataset(cfg: SFTDataConfig, interleave=False) -> HFIterableDataset:
@@ -445,7 +460,7 @@ def build_sft_train_dataset(cfg: SFTDataConfig, interleave=False) -> HFIterableD
         remove_columns=list(xlam.features.keys()),
     )
     xlam = xlam.filter(_valid_example).take(cfg.xlam_take)
-    _check("xlam", xlam)
+    # _check("xlam", xlam)
 
     toolace = _load_stream("Team-ACE/ToolACE")
     toolace = toolace.shuffle(buffer_size=cfg.shuffle_buffer_size, seed=cfg.seed)
@@ -454,7 +469,7 @@ def build_sft_train_dataset(cfg: SFTDataConfig, interleave=False) -> HFIterableD
         remove_columns=list(toolace.features.keys()),
     )
     toolace = toolace.filter(_valid_example).take(cfg.toolace_take)
-    _check("toolace", toolace)
+    # _check("toolace", toolace)
 
     apigen_mt = _load_stream("Salesforce/APIGen-MT-5k")
     apigen_mt = apigen_mt.shuffle(buffer_size=cfg.shuffle_buffer_size, seed=cfg.seed)
@@ -463,7 +478,7 @@ def build_sft_train_dataset(cfg: SFTDataConfig, interleave=False) -> HFIterableD
         remove_columns=list(apigen_mt.features.keys()),
     )
     apigen_mt = apigen_mt.filter(_valid_example).take(cfg.apigen_mt_take)
-    _check("apigen_mt", apigen_mt)
+    # _check("apigen_mt", apigen_mt)
 
     if interleave:
         tool_pool = interleave_datasets(
@@ -488,7 +503,7 @@ def build_sft_train_dataset(cfg: SFTDataConfig, interleave=False) -> HFIterableD
             stopping_strategy="first_exhausted",
         )
         return mixed
-    tool_pool = concatenate_datasets([xlam, toolace, apigen_mt])
+    # tool_pool = concatenate_datasets([xlam, toolace, apigen_mt])
     ja_pool = concatenate_datasets([magpie, jamard, oasst2, llm_jp_instructions])
     # mixed = concatenate_datasets([ja_pool, aya, coding, tool_pool])
     mixed = concatenate_datasets([ja_pool, aya, coding])

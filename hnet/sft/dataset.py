@@ -66,7 +66,11 @@ def _interleave_nonzero(
         selected.append(ds)
         selected_takes.append(t)
     if not selected:
-        raise ValueError("All datasets were disabled by take=0")
+        if not datasets:
+            raise ValueError("datasets must not be empty")
+        # Return an empty stream so parent mixes can safely skip this branch
+        # when its corresponding take sum is 0.
+        return datasets[0].take(0)
     if len(selected) == 1:
         return selected[0]
     probs = _safe_probs_from_takes(selected_takes)

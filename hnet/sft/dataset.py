@@ -709,7 +709,9 @@ def build_sft_train_dataset(cfg: SFTDataConfig) -> HFIterableDataset:
             cfg.magpie_take
             + cfg.jamard_take
             + cfg.oasst2_take
-            + cfg.llm_jp_instructions_take,
+            + cfg.llm_jp_instructions_take
+            + cfg.hachi_qa_take
+            + cfg.few_shot_qa_take,
             cfg.aya_en_take,
             cfg.coding_take,
             cfg.xlam_take + cfg.toolace_take + cfg.apigen_mt_take,

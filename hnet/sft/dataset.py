@@ -30,6 +30,9 @@ class SFTDataConfig:
     jamard_take: int = 50_000
     oasst2_take: int = 1_000
     llm_jp_instructions_take: int = 10_000
+    select_qa_take: int = 200
+    hachi_qa_take: int = 1000
+    few_shot_qa_take: int = 1000
 
     aya_en_take: int = 15_000
     coding_take: int = 15_000
@@ -96,6 +99,9 @@ def _cfg_with_mix_overrides(cfg: SFTDataConfig) -> SFTDataConfig:
         "jamard_take",
         "oasst2_take",
         "llm_jp_instructions_take",
+        "select_qa_take",
+        "hachi_qa_take",
+        "few_shot_qa_take",
         "aya_en_take",
         "coding_take",
         "xlam_take",
@@ -385,6 +391,118 @@ def _map_llm_jp_instructions(
     return {"messages": messages}
 
 
+def _map_select_qa(
+    example: Mapping[str, object], system_prompt: str
+) -> dict[str, object]:
+    qa = example["question"]
+    choices = example["choices"]
+    ans = example["answer"]
+    rational = example["rationale"]
+
+    user_input = f"与えられた問題に対して、回答として正しい選択肢を選んでください。\n\n{qa}\n選択肢: {choices}"
+    output = f"<think>\n{rational}\n</think>\n{ans}"
+
+    messages = [
+        {"role": "user", "content": user_input},
+        {"role": "assistant", "content": output},
+    ]
+    messages = _prepend_qwen3_system(
+        messages,
+        think_mode=True,
+        system_prompt=system_prompt,
+    )
+    return {"messages": messages}
+
+
+def _map_hachi_qa(
+    example: Mapping[str, object], system_prompt: str
+) -> dict[str, object]:
+    instruction = example["instruction"]
+    input = example["input"]
+    output = example["output"]
+
+    user_input = f"### 指示\n{instruction}\n### 入力: {input}\n### 応答:\n"
+    output = f"{output}"
+
+    messages = [
+        {"role": "user", "content": user_input},
+        {"role": "assistant", "content": output},
+    ]
+    messages = _prepend_qwen3_system(
+        messages,
+        think_mode=True,
+        system_prompt=system_prompt,
+    )
+    return {"messages": messages}
+
+
+def _format_few_shot(q, q1, a1, q2, a2, q3, a3, q4, a4):
+    return f"""### 指示
+質問に対して、回答を出力してください。
+<examples>
+<example1>
+### 入力:
+質問: {q1}
+### 応答:
+{a1}
+</example1>
+<example2>
+### 入力:
+質問: {q2}
+### 応答:
+{a2}
+</example2>
+<example3>
+### 入力:
+質問: {q3}
+### 応答:
+{a3}
+</example3>
+<example4>
+### 入力:
+質問: {q4}
+### 応答:
+{a4}
+</example4>
+</examples>
+
+### 入力:
+質問: {q}
+### 応答:"""
+
+
+def _map_few_shot_qa(
+    example: Mapping[str, object], system_prompt: str
+) -> dict[str, object]:
+    qa = example["question"]
+    q1 = example["example1_question"]
+    a1 = example["example1_answer"]
+
+    q2 = example["example2_question"]
+    a2 = example["example2_answer"]
+
+    q3 = example["example3_question"]
+    a3 = example["example3_answer"]
+
+    q4 = example["example4_question"]
+    a4 = example["example4_answer"]
+
+    ans = example["answer"]
+
+    user_input = _format_few_shot(qa, q1, a1, q2, a2, q3, a3, q4, a4)
+
+    messages = [
+        {"role": "user", "content": user_input},
+        {"role": "assistant", "content": ans},
+    ]
+    messages = _prepend_qwen3_system(
+        messages,
+        think_mode=True,
+        system_prompt=system_prompt,
+    )
+    return {"messages": messages}
+
+
 def _map_jamard(example: Mapping[str, object], system_prompt: str) -> dict[str, object]:
     messages = _normalize_messages(example["messages"])
 
@@ -492,6 +610,38 @@ def build_sft_train_dataset(cfg: SFTDataConfig) -> HFIterableDataset:
     )
     _check("llm_jp_instructions", llm_jp_instructions)
 
+    ## qa
+    select_qa = _load_stream("llm-jp/llm-jp-instructions-jculture-mcq")
+    select_qa = select_qa.shuffle(buffer_size=cfg.shuffle_buffer_size, seed=cfg.seed)
+    select_qa = select_qa.map(
+        lambda ex: _map_select_qa(ex, cfg.system_prompt),
+        remove_columns=list(select_qa.features.keys()),
+    )
+    select_qa = select_qa.filter(_valid_example).take(cfg.select_qa_take)
+    _check("select_qa", select_qa)
+
+    ## hachi qa
+    hachi_qa = _load_stream("HachiML/Hachi-Alpaca", split="v1.0_cleaned")
+    hachi_qa = hachi_qa.shuffle(buffer_size=cfg.shuffle_buffer_size, seed=cfg.seed)
+    hachi_qa = hachi_qa.map(
+        lambda ex: _map_hachi_qa(ex, cfg.system_prompt),
+        remove_columns=list(select_qa.features.keys()),
+    )
+    hachi_qa = hachi_qa.filter(_valid_example).take(cfg.hachi_qa_take)
+    _check("hachi_qa", hachi_qa)
+
+    ## auto-qa-few-shot
+    few_shot_qa = _load_stream("if001/auto-wiki-qa-few-shot")
+    few_shot_qa = few_shot_qa.shuffle(
+        buffer_size=cfg.shuffle_buffer_size, seed=cfg.seed
+    )
+    few_shot_qa = few_shot_qa.map(
+        lambda ex: _map_few_shot_qa(ex, cfg.system_prompt),
+        remove_columns=list(select_qa.features.keys()),
+    )
+    few_shot_qa = hachi_qa.filter(_valid_example).take(cfg.few_shot_qa_take)
+    _check("few_shot_qa", few_shot_qa)
+
     # 3) English chat from Aya
     aya = _load_stream("CohereLabs/aya_dataset")
     aya = aya.filter(lambda ex: str(ex["language_code"]).lower() in {"eng", "en"})
@@ -540,12 +690,15 @@ def build_sft_train_dataset(cfg: SFTDataConfig) -> HFIterableDataset:
     )
 
     ja_pool = _interleave_nonzero(
-        [magpie, jamard, oasst2, llm_jp_instructions],
+        [magpie, jamard, oasst2, llm_jp_instructions, select_qa, hachi_qa, few_shot_qa],
         [
             cfg.magpie_take,
             cfg.jamard_take,
             cfg.oasst2_take,
             cfg.llm_jp_instructions_take,
+            cfg.select_qa_take,
+            cfg.hachi_qa_take,
+            cfg.few_shot_qa_take,
         ],
         seed=cfg.seed,
     )

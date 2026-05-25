@@ -430,7 +430,7 @@ def _map_hachi_qa(
     ]
     messages = _prepend_qwen3_system(
         messages,
-        think_mode=True,
+        think_mode=False,
         system_prompt=system_prompt,
     )
     return {"messages": messages}
@@ -468,7 +468,8 @@ def _format_few_shot(q, q1, a1, q2, a2, q3, a3, q4, a4):
 
 ### 入力:
 質問: {q}
-### 応答:"""
+### 応答:
+"""
 
 
 def _map_few_shot_qa(
@@ -497,7 +498,7 @@ def _map_few_shot_qa(
     ]
     messages = _prepend_qwen3_system(
         messages,
-        think_mode=True,
+        think_mode=False,
         system_prompt=system_prompt,
     )
     return {"messages": messages}
@@ -639,7 +640,7 @@ def build_sft_train_dataset(cfg: SFTDataConfig) -> HFIterableDataset:
         lambda ex: _map_few_shot_qa(ex, cfg.system_prompt),
         remove_columns=list(few_shot_qa.features.keys()),
     )
-    few_shot_qa = hachi_qa.filter(_valid_example).take(cfg.few_shot_qa_take)
+    few_shot_qa = few_shot_qa.filter(_valid_example).take(cfg.few_shot_qa_take)
     _check("few_shot_qa", few_shot_qa)
 
     # 3) English chat from Aya

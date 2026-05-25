@@ -5,7 +5,6 @@
   "jamard_take": 10000,
   "oasst2_take": 100000,
   "llm_jp_instructions_take": 300,
-  "select_qa_take": 200,
   "hachi_qa_take": 1000,
   "few_shot_qa_take": 1000,
   "aya_en_take": 5000,

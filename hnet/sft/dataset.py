@@ -30,7 +30,7 @@ class SFTDataConfig:
     jamard_take: int = 50_000
     oasst2_take: int = 1_000
     llm_jp_instructions_take: int = 10_000
-    select_qa_take: int = 200
+    # select_qa_take: int = 200
     hachi_qa_take: int = 1000
     few_shot_qa_take: int = 1000
 
@@ -99,7 +99,7 @@ def _cfg_with_mix_overrides(cfg: SFTDataConfig) -> SFTDataConfig:
         "jamard_take",
         "oasst2_take",
         "llm_jp_instructions_take",
-        "select_qa_take",
+        # "select_qa_take",
         "hachi_qa_take",
         "few_shot_qa_take",
         "aya_en_take",
@@ -610,22 +610,22 @@ def build_sft_train_dataset(cfg: SFTDataConfig) -> HFIterableDataset:
     )
     _check("llm_jp_instructions", llm_jp_instructions)
 
-    ## qa
-    select_qa = _load_stream("llm-jp/llm-jp-instructions-jculture-mcq")
-    select_qa = select_qa.shuffle(buffer_size=cfg.shuffle_buffer_size, seed=cfg.seed)
-    select_qa = select_qa.map(
-        lambda ex: _map_select_qa(ex, cfg.system_prompt),
-        remove_columns=list(select_qa.features.keys()),
-    )
-    select_qa = select_qa.filter(_valid_example).take(cfg.select_qa_take)
-    _check("select_qa", select_qa)
+    # ## qa
+    # select_qa = _load_stream("llm-jp/llm-jp-instructions-jculture-mcq")
+    # select_qa = select_qa.shuffle(buffer_size=cfg.shuffle_buffer_size, seed=cfg.seed)
+    # select_qa = select_qa.map(
+    #     lambda ex: _map_select_qa(ex, cfg.system_prompt),
+    #     remove_columns=list(select_qa.features.keys()),
+    # )
+    # select_qa = select_qa.filter(_valid_example).take(cfg.select_qa_take)
+    # _check("select_qa", select_qa)
 
     ## hachi qa
     hachi_qa = _load_stream("HachiML/Hachi-Alpaca", split="v1.0_cleaned")
     hachi_qa = hachi_qa.shuffle(buffer_size=cfg.shuffle_buffer_size, seed=cfg.seed)
     hachi_qa = hachi_qa.map(
         lambda ex: _map_hachi_qa(ex, cfg.system_prompt),
-        remove_columns=list(select_qa.features.keys()),
+        remove_columns=list(hachi_qa.features.keys()),
     )
     hachi_qa = hachi_qa.filter(_valid_example).take(cfg.hachi_qa_take)
     _check("hachi_qa", hachi_qa)

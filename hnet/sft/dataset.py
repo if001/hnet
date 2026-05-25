@@ -637,7 +637,7 @@ def build_sft_train_dataset(cfg: SFTDataConfig) -> HFIterableDataset:
     )
     few_shot_qa = few_shot_qa.map(
         lambda ex: _map_few_shot_qa(ex, cfg.system_prompt),
-        remove_columns=list(select_qa.features.keys()),
+        remove_columns=list(few_shot_qa.features.keys()),
     )
     few_shot_qa = hachi_qa.filter(_valid_example).take(cfg.few_shot_qa_take)
     _check("few_shot_qa", few_shot_qa)

@@ -690,13 +690,12 @@ def build_sft_train_dataset(cfg: SFTDataConfig) -> HFIterableDataset:
     )
 
     ja_pool = _interleave_nonzero(
-        [magpie, jamard, oasst2, llm_jp_instructions, select_qa, hachi_qa, few_shot_qa],
+        [magpie, jamard, oasst2, llm_jp_instructions, hachi_qa, few_shot_qa],
         [
             cfg.magpie_take,
             cfg.jamard_take,
             cfg.oasst2_take,
             cfg.llm_jp_instructions_take,
-            cfg.select_qa_take,
             cfg.hachi_qa_take,
             cfg.few_shot_qa_take,
         ],

@@ -5,6 +5,7 @@ import re
 from typing import Iterator, Mapping, Sequence
 import json
 from pathlib import Path
+import numpy as np
 
 from datasets import interleave_datasets, load_dataset
 from datasets.iterable_dataset import IterableDataset as HFIterableDataset
@@ -703,7 +704,18 @@ def build_sft_train_dataset(cfg: SFTDataConfig) -> HFIterableDataset:
         ],
         seed=cfg.seed,
     )
-
+    _ja = (
+        cfg.magpie_take
+        + cfg.jamard_take
+        + cfg.oasst2_take
+        + cfg.llm_jp_instructions_take
+        + cfg.hachi_qa_take
+        + cfg.few_shot_qa_take
+    )
+    rate = np.array([_ja, cfg.aya_en_take, cfg.coding_take]) / (
+        _ja + cfg.aya_en_take + cfg.coding_take
+    )
+    print("rate[ja, en, coding]: ", rate)
     mixed = _interleave_nonzero(
         [ja_pool, aya, coding, tool_pool],
         [

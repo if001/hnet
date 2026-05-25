@@ -378,7 +378,7 @@ def _map_llm_jp_instructions(
 ) -> dict[str, object]:
     text = example["text"]
     output = example["output"]
-    user_input = f"### 指示\n質問に対して、回答を出力してください。\n\n### 入力: \n{text}\n### 応答:\n"
+    user_input = f"### 指示\n質問に対して、回答を出力してください。\n\n### 入力:\n質問: {text}\n### 応答:\n"
     messages = [
         {"role": "user", "content": user_input},
         {"role": "assistant", "content": output},
@@ -421,7 +421,7 @@ def _map_hachi_qa(
     input = example["input"]
     output = example["output"]
 
-    user_input = f"### 指示\n{instruction}\n### 入力: {input}\n### 応答:\n"
+    user_input = f"### 指示\n{instruction}\n\n### 入力: {input}\n### 応答:\n"
     output = f"{output}"
 
     messages = [
@@ -439,6 +439,7 @@ def _map_hachi_qa(
 def _format_few_shot(q, q1, a1, q2, a2, q3, a3, q4, a4):
     return f"""### 指示
 質問に対して、回答を出力してください。
+
 <examples>
 <example1>
 ### 入力:

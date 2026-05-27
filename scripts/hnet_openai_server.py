@@ -19,7 +19,7 @@ if str(PROJECT_ROOT) not in sys.path:
 
 from generate import generate as hnet_generate
 from generate import load_from_pretrained
-from hnet.training.data import DefaultRecordFormatter
+from transformers import AutoTokenizer, PreTrainedTokenizerBase
 
 
 def run_warmup(
@@ -62,16 +62,23 @@ class HNetOpenAIHandler(BaseHTTPRequestHandler):
         return json.loads(raw.decode("utf-8"))
 
     def _build_chat_prompt(self, messages: list[dict[str, Any]]) -> str:
-        formatter = DefaultRecordFormatter()
-        rendered = formatter.format_record({"messages": messages})
-        if rendered is None:
-            return "assistant: "
-        return f"{rendered}\nassistant: "
+        return self.server.chat_tokenizer.apply_chat_template(
+            messages,
+            tokenize=False,
+            add_generation_prompt=True,
+        )
 
     def _default_system_message(self) -> dict[str, str]:
         control = "/think" if self.server.think_mode else "/no_think"
         system_content = f"{self.server.system_prompt}\n{control}".strip()
         return {"role": "system", "content": system_content}
+
+    def _ensure_system_message(
+        self, messages: list[dict[str, Any]]
+    ) -> list[dict[str, Any]]:
+        if messages and str(messages[0].get("role", "")).strip().lower() == "system":
+            return messages
+        return [self._default_system_message(), *messages]
 
     def _generate_text(
         self, prompt: str, max_tokens: int, temperature: float, top_p: float
@@ -191,7 +198,9 @@ class HNetOpenAIHandler(BaseHTTPRequestHandler):
                     str(message.get("content", "")) for message in messages
                 )
             else:
-                inference_prompt = self._build_chat_prompt(messages)
+                inference_prompt = self._build_chat_prompt(
+                    self._ensure_system_message(messages)
+                )
 
         if not inference_prompt:
             self._write_json(
@@ -292,6 +301,12 @@ def parse_args() -> argparse.Namespace:
         help="Inference dtype for model load (default: auto).",
     )
     parser.add_argument(
+        "--chat-tokenizer-path",
+        type=str,
+        default="Qwen/Qwen3-0.6B",
+        help="Tokenizer path used for Qwen chat template rendering.",
+    )
+    parser.add_argument(
         "--system-prompt",
         type=str,
         default="You are a helpful assistant.",
@@ -343,6 +358,9 @@ def main() -> None:
         )
         models.append(model)
     print("loading_model=false")
+    chat_tokenizer: PreTrainedTokenizerBase = AutoTokenizer.from_pretrained(
+        args.chat_tokenizer_path
+    )
 
     if not args.skip_warmup:
         for index, model in enumerate(models, start=1):
@@ -368,6 +386,7 @@ def main() -> None:
     server.default_max_tokens = args.max_tokens
     server.default_temperature = args.temperature
     server.default_top_p = args.top_p
+    server.chat_tokenizer = chat_tokenizer
     server.system_prompt = args.system_prompt
     server.think_mode = args.think_mode
     server.raw_prompt = args.raw_prompt
@@ -375,6 +394,7 @@ def main() -> None:
     print(
         "server_started=true "
         f"host={args.host} port={args.port} model_name={args.model_name} "
+        f"chat_tokenizer_path={args.chat_tokenizer_path} "
         f"raw_prompt={args.raw_prompt} think_mode={args.think_mode} "
         f"max_active_generations={args.max_active_generations}"
     )

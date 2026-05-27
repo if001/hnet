@@ -499,9 +499,9 @@ def _map_select_qa(
 ) -> dict[str, object]:
     qa = example["query"]
     a1 = example["answer"]
-    a2 = example["wrong_answer1"]
-    a3 = example["wrong_answer2"]
-    a4 = example["wrong_answer3"]
+    a2 = example["wrong_answer_1"]
+    a3 = example["wrong_answer_2"]
+    a4 = example["wrong_answer_3"]
     choices = [a1, a2, a3, a4]
     random.shuffle(choices)
     ans_idx = choices.index(a1)
@@ -715,6 +715,7 @@ def build_sft_train_dataset(cfg: SFTDataConfig) -> HFIterableDataset:
             cfg.llm_jp_instructions_take,
             cfg.hachi_qa_take,
             cfg.few_shot_qa_take,
+            cfg.select_qa_take,
         ],
         seed=cfg.seed,
     )
@@ -725,6 +726,7 @@ def build_sft_train_dataset(cfg: SFTDataConfig) -> HFIterableDataset:
         + cfg.llm_jp_instructions_take
         + cfg.hachi_qa_take
         + cfg.few_shot_qa_take
+        + cfg.select_qa_take
     )
     rate = np.array([_ja, cfg.aya_en_take, cfg.coding_take]) / (
         _ja + cfg.aya_en_take + cfg.coding_take
@@ -738,7 +740,8 @@ def build_sft_train_dataset(cfg: SFTDataConfig) -> HFIterableDataset:
             + cfg.oasst2_take
             + cfg.llm_jp_instructions_take
             + cfg.hachi_qa_take
-            + cfg.few_shot_qa_take,
+            + cfg.few_shot_qa_take
+            + cfg.select_qa_take,
             cfg.aya_en_take,
             cfg.coding_take,
             cfg.xlam_take + cfg.toolace_take + cfg.apigen_mt_take,

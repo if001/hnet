@@ -487,11 +487,11 @@ def _map_few_shot_qa(
 
 
 def _format_select_qa(q, a, b, c, d):
-    return """与えられた選択問題に答えてください。回答の最後の行に「答え：A/B/C/D」のように出力してください（例：「答え：A」）。
+    return f"""与えられた選択問題に答えてください。回答の最後の行に「答え：A/B/C/D」のように出力してください（例：「答え：A」）。
 
-    質問：{q}
-    選択肢: A:{a}, B:{b}, C:{c}, D:{d}
-    """
+質問：{q}
+選択肢: A:{a}, B:{b}, C:{c}, D:{d}
+"""
 
 
 def _map_select_qa(
@@ -707,7 +707,7 @@ def build_sft_train_dataset(cfg: SFTDataConfig) -> HFIterableDataset:
     )
 
     ja_pool = _interleave_nonzero(
-        [magpie, jamard, oasst2, llm_jp_instructions, hachi_qa, few_shot_qa],
+        [magpie, jamard, oasst2, llm_jp_instructions, hachi_qa, few_shot_qa, select_qa],
         [
             cfg.magpie_take,
             cfg.jamard_take,

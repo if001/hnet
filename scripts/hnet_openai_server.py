@@ -9,7 +9,7 @@ import uuid
 from http import HTTPStatus
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 
 # Ensure project root is importable when run as:
 #   python scripts/hnet_openai_server.py
@@ -41,8 +41,26 @@ def run_warmup(
     return generated_tokens
 
 
+class HNetOpenAIServer(ThreadingHTTPServer):
+    model_pool: queue.Queue[Any]
+    generation_counter_lock: threading.Lock
+    active_generations: int
+    model_name: str
+    default_max_tokens: int
+    default_temperature: float
+    default_top_p: float
+    chat_tokenizer: PreTrainedTokenizerBase
+    system_prompt: str
+    think_mode: bool
+    raw_prompt: bool
+
+
 class HNetOpenAIHandler(BaseHTTPRequestHandler):
     server_version = "HNetOpenAIServer/0.1"
+
+    @property
+    def hnet_server(self) -> HNetOpenAIServer:
+        return cast(HNetOpenAIServer, self.server)
 
     def _write_json(self, status: HTTPStatus, payload: dict[str, Any]) -> None:
         data = json.dumps(payload, ensure_ascii=False).encode("utf-8")
@@ -62,15 +80,15 @@ class HNetOpenAIHandler(BaseHTTPRequestHandler):
         return json.loads(raw.decode("utf-8"))
 
     def _build_chat_prompt(self, messages: list[dict[str, Any]]) -> str:
-        return self.server.chat_tokenizer.apply_chat_template(
+        return self.hnet_server.chat_tokenizer.apply_chat_template(
             messages,
             tokenize=False,
             add_generation_prompt=True,
         )
 
     def _default_system_message(self) -> dict[str, str]:
-        control = "/think" if self.server.think_mode else "/no_think"
-        system_content = f"{self.server.system_prompt}\n{control}".strip()
+        control = "/think" if self.hnet_server.think_mode else "/no_think"
+        system_content = f"{self.hnet_server.system_prompt}\n{control}".strip()
         return {"role": "system", "content": system_content}
 
     def _ensure_system_message(
@@ -83,9 +101,9 @@ class HNetOpenAIHandler(BaseHTTPRequestHandler):
     def _generate_text(
         self, prompt: str, max_tokens: int, temperature: float, top_p: float
     ) -> str:
-        model = self.server.model_pool.get()
-        with self.server.generation_counter_lock:
-            self.server.active_generations += 1
+        model = self.hnet_server.model_pool.get()
+        with self.hnet_server.generation_counter_lock:
+            self.hnet_server.active_generations += 1
         decoder = codecs.getincrementaldecoder("utf-8")(errors="replace")
         chunks: list[str] = []
 
@@ -107,9 +125,9 @@ class HNetOpenAIHandler(BaseHTTPRequestHandler):
 
             return "".join(chunks)
         finally:
-            with self.server.generation_counter_lock:
-                self.server.active_generations -= 1
-            self.server.model_pool.put(model)
+            with self.hnet_server.generation_counter_lock:
+                self.hnet_server.active_generations -= 1
+            self.hnet_server.model_pool.put(model)
 
     def do_GET(self) -> None:
         if self.path == "/health":
@@ -123,7 +141,7 @@ class HNetOpenAIHandler(BaseHTTPRequestHandler):
                     "object": "list",
                     "data": [
                         {
-                            "id": self.server.model_name,
+                            "id": self.hnet_server.model_name,
                             "object": "model",
                             "created": int(time.time()),
                             "owned_by": "hnet-local",
@@ -165,13 +183,15 @@ class HNetOpenAIHandler(BaseHTTPRequestHandler):
             )
             return
 
-        max_tokens = int(payload.get("max_tokens", self.server.default_max_tokens))
-        temperature = float(payload.get("temperature", self.server.default_temperature))
-        top_p = float(payload.get("top_p", self.server.default_top_p))
+        max_tokens = int(payload.get("max_tokens", self.hnet_server.default_max_tokens))
+        temperature = float(
+            payload.get("temperature", self.hnet_server.default_temperature)
+        )
+        top_p = float(payload.get("top_p", self.hnet_server.default_top_p))
 
         if self.path == "/v1/completions":
             prompt = str(payload.get("prompt", ""))
-            if self.server.raw_prompt:
+            if self.hnet_server.raw_prompt:
                 inference_prompt = prompt
             else:
                 inference_prompt = self._build_chat_prompt(
@@ -193,7 +213,7 @@ class HNetOpenAIHandler(BaseHTTPRequestHandler):
                     },
                 )
                 return
-            if self.server.raw_prompt:
+            if self.hnet_server.raw_prompt:
                 inference_prompt = "\n".join(
                     str(message.get("content", "")) for message in messages
                 )
@@ -229,7 +249,7 @@ class HNetOpenAIHandler(BaseHTTPRequestHandler):
                 "id": request_id,
                 "object": "text_completion",
                 "created": created,
-                "model": self.server.model_name,
+                "model": self.hnet_server.model_name,
                 "choices": [
                     {
                         "text": generated,
@@ -249,7 +269,7 @@ class HNetOpenAIHandler(BaseHTTPRequestHandler):
                 "id": request_id,
                 "object": "chat.completion",
                 "created": created,
-                "model": self.server.model_name,
+                "model": self.hnet_server.model_name,
                 "choices": [
                     {
                         "index": 0,
@@ -376,7 +396,7 @@ def main() -> None:
                 f"warmup_finished=true instance={index}/{len(models)} generated_tokens={generated_tokens}"
             )
 
-    server = ThreadingHTTPServer((args.host, args.port), HNetOpenAIHandler)
+    server = HNetOpenAIServer((args.host, args.port), HNetOpenAIHandler)
     server.model_pool = queue.Queue(maxsize=args.max_active_generations)
     for model in models:
         server.model_pool.put(model)

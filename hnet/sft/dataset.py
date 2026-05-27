@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import random
 from dataclasses import dataclass
 import re
 from typing import Iterator, Mapping, Sequence
@@ -34,6 +35,7 @@ class SFTDataConfig:
     # select_qa_take: int = 200
     hachi_qa_take: int = 1000
     few_shot_qa_take: int = 1000
+    select_qa_take: int = 10_000
 
     aya_en_take: int = 15_000
     coding_take: int = 15_000
@@ -103,6 +105,7 @@ def _cfg_with_mix_overrides(cfg: SFTDataConfig) -> SFTDataConfig:
         # "select_qa_take",
         "hachi_qa_take",
         "few_shot_qa_take",
+        "select_qa_take",
         "aya_en_take",
         "coding_take",
         "xlam_take",
@@ -392,29 +395,6 @@ def _map_llm_jp_instructions(
     return {"messages": messages}
 
 
-def _map_select_qa(
-    example: Mapping[str, object], system_prompt: str
-) -> dict[str, object]:
-    qa = example["question"]
-    choices = example["choices"]
-    ans = example["answer"]
-    rational = example["rationale"]
-
-    user_input = f"与えられた問題に対して、回答として正しい選択肢を選んでください。\n\n{qa}\n選択肢: {choices}"
-    output = f"<think>\n{rational}\n</think>\n{ans}"
-
-    messages = [
-        {"role": "user", "content": user_input},
-        {"role": "assistant", "content": output},
-    ]
-    messages = _prepend_qwen3_system(
-        messages,
-        think_mode=True,
-        system_prompt=system_prompt,
-    )
-    return {"messages": messages}
-
-
 def _map_hachi_qa(
     example: Mapping[str, object], system_prompt: str
 ) -> dict[str, object]:
@@ -497,6 +477,41 @@ def _map_few_shot_qa(
     messages = [
         {"role": "user", "content": user_input},
         {"role": "assistant", "content": ans},
+    ]
+    messages = _prepend_qwen3_system(
+        messages,
+        think_mode=False,
+        system_prompt=system_prompt,
+    )
+    return {"messages": messages}
+
+
+def _format_select_qa(q, a, b, c, d):
+    return """与えられた選択問題に答えてください。回答の最後の行に「答え：A/B/C/D」のように出力してください（例：「答え：A」）。
+
+    質問：{q}
+    選択肢: A:{a}, B:{b}, C:{c}, D:{d}
+    """
+
+
+def _map_select_qa(
+    example: Mapping[str, object], system_prompt: str
+) -> dict[str, object]:
+    qa = example["query"]
+    a1 = example["answer"]
+    a2 = example["wrong_answer1"]
+    a3 = example["wrong_answer2"]
+    a4 = example["wrong_answer3"]
+    choices = [a1, a2, a3, a4]
+    random.shuffle(choices)
+    ans_idx = choices.index(a1)
+
+    user_input = _format_select_qa(qa, choices[0], choices[1], choices[2], choices[3])
+
+    ans = ["A", "B", "C", "D"]
+    messages = [
+        {"role": "user", "content": user_input},
+        {"role": "assistant", "content": "答え: " + ans[ans_idx]},
     ]
     messages = _prepend_qwen3_system(
         messages,
@@ -613,16 +628,6 @@ def build_sft_train_dataset(cfg: SFTDataConfig) -> HFIterableDataset:
     )
     _check("llm_jp_instructions", llm_jp_instructions)
 
-    # ## qa
-    # select_qa = _load_stream("llm-jp/llm-jp-instructions-jculture-mcq")
-    # select_qa = select_qa.shuffle(buffer_size=cfg.shuffle_buffer_size, seed=cfg.seed)
-    # select_qa = select_qa.map(
-    #     lambda ex: _map_select_qa(ex, cfg.system_prompt),
-    #     remove_columns=list(select_qa.features.keys()),
-    # )
-    # select_qa = select_qa.filter(_valid_example).take(cfg.select_qa_take)
-    # _check("select_qa", select_qa)
-
     ## hachi qa
     hachi_qa = _load_stream("HachiML/Hachi-Alpaca", split="v1.0_cleaned")
     hachi_qa = hachi_qa.shuffle(buffer_size=cfg.shuffle_buffer_size, seed=cfg.seed)
@@ -644,6 +649,15 @@ def build_sft_train_dataset(cfg: SFTDataConfig) -> HFIterableDataset:
     )
     few_shot_qa = few_shot_qa.filter(_valid_example).take(cfg.few_shot_qa_take)
     _check("few_shot_qa", few_shot_qa)
+
+    select_qa = _load_stream("if001/auto-wiki-select-qa")
+    select_qa = select_qa.shuffle(buffer_size=cfg.shuffle_buffer_size, seed=cfg.seed)
+    select_qa = select_qa.map(
+        lambda ex: _map_select_qa(ex, cfg.system_prompt),
+        remove_columns=list(select_qa.features.keys()),
+    )
+    select_qa = select_qa.filter(_valid_example).take(cfg.select_qa_take)
+    _check("select_qa", select_qa)
 
     # 3) English chat from Aya
     aya = _load_stream("CohereLabs/aya_dataset")

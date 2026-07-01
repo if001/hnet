@@ -92,6 +92,25 @@ def parse_args() -> TrainingConfig:
     parser.add_argument("--validation-split-ratio", type=float, default=0.1)
     parser.add_argument("--train-ratio-weight", type=float, default=0.02)
     parser.add_argument(
+        "--byte-boundary-constraint",
+        type=str,
+        choices=["off", "utf8-soft"],
+        default="off",
+        help="Optional soft prior against chunk boundaries on UTF-8 continuation bytes.",
+    )
+    parser.add_argument(
+        "--byte-boundary-constraint-weight",
+        type=float,
+        default=0.0,
+        help="Auxiliary loss weight for UTF-8 continuation-byte boundary penalty.",
+    )
+    parser.add_argument(
+        "--byte-boundary-constraint-bias",
+        type=float,
+        default=0.0,
+        help="Soft bias strength that lowers stage0 boundary probability on UTF-8 continuation bytes.",
+    )
+    parser.add_argument(
         "--compression-ratio",
         action="append",
         dest="compression_ratios",
@@ -181,8 +200,13 @@ def parse_args() -> TrainingConfig:
     validation_datasets = None
     rope_scaling = None
     if args.rope_type is not None:
-        if args.rope_factor is None or args.rope_original_max_position_embeddings is None:
-            raise ValueError("--rope-type requires --rope-factor and --rope-original-max-position-embeddings")
+        if (
+            args.rope_factor is None
+            or args.rope_original_max_position_embeddings is None
+        ):
+            raise ValueError(
+                "--rope-type requires --rope-factor and --rope-original-max-position-embeddings"
+            )
         rope_scaling = {
             "rope_type": args.rope_type,
             "factor": args.rope_factor,
@@ -221,6 +245,9 @@ def parse_args() -> TrainingConfig:
         validation_max_batches=args.validation_max_batches,
         validation_split_ratio=args.validation_split_ratio,
         train_ratio_weight=args.train_ratio_weight,
+        byte_boundary_constraint=args.byte_boundary_constraint,
+        byte_boundary_constraint_weight=args.byte_boundary_constraint_weight,
+        byte_boundary_constraint_bias=args.byte_boundary_constraint_bias,
         compression_ratios=compression_ratios,
         lr_multipliers=lr_multipliers,
         seed=args.seed,

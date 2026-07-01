@@ -33,7 +33,14 @@ torch.backends.cudnn.allow_tf32 = True
 
 
 class TrainingMetricsLogger:
-    fieldnames = ["step", "learning_rate", "ce_loss", "ratio_loss", "total_loss"]
+    fieldnames = [
+        "step",
+        "learning_rate",
+        "ce_loss",
+        "ratio_loss",
+        "byte_boundary_loss",
+        "total_loss",
+    ]
 
     def __init__(self, output_path: Path, append: bool = False) -> None:
         self.output_path = output_path
@@ -54,6 +61,7 @@ class TrainingMetricsLogger:
         learning_rate: float,
         ce_loss: float,
         ratio_loss: float,
+        byte_boundary_loss: float,
         total_loss: float,
     ) -> None:
         with self.output_path.open("a", encoding="utf-8", newline="") as handle:
@@ -64,6 +72,7 @@ class TrainingMetricsLogger:
                     "learning_rate": learning_rate,
                     "ce_loss": ce_loss,
                     "ratio_loss": ratio_loss,
+                    "byte_boundary_loss": byte_boundary_loss,
                     "total_loss": total_loss,
                 }
             )
@@ -79,6 +88,7 @@ class ValidationMetricsLogger:
         "target_ratio_gap",
         "actual_selected_fraction",
         "mean_boundary_probability",
+        "stage0_mid_utf8_boundary_fraction",
         "boundary_positions_sample",
         "stage0_selected_fraction",
         "stage1_selected_fraction",
@@ -246,6 +256,26 @@ def compute_ratio_loss(
         ratio = compression_ratios[min(index, len(compression_ratios) - 1)]
         losses.append(load_balancing_loss(router_output, ratio))
     return torch.stack(losses).mean()
+
+
+def build_utf8_continuation_mask(input_ids: torch.Tensor) -> torch.Tensor:
+    return (input_ids >= 0x80) & (input_ids <= 0xBF)
+
+
+def compute_utf8_boundary_penalty(
+    router_output: object,
+    continuation_mask: torch.Tensor | None,
+    *,
+    valid_mask: torch.Tensor | None = None,
+) -> torch.Tensor:
+    if continuation_mask is None:
+        return router_output.boundary_prob[..., -1].new_zeros(())
+
+    weight = continuation_mask.float()
+    if valid_mask is not None:
+        weight = weight * valid_mask.float()
+    denom = weight.sum().clamp(min=1.0)
+    return (router_output.boundary_prob[..., -1].float() * weight).sum() / denom
 
 
 def apply_weight_decay(
@@ -526,6 +556,7 @@ def evaluate_validation(
     ce_sum = 0.0
     token_count = 0
     boundary_positions_sample = ""
+    stage0_mid_utf8_boundary_fraction_values: list[float] = []
 
     selected_sum_by_stage: list[float] = []
     mean_prob_sum_by_stage: list[float] = []
@@ -540,13 +571,21 @@ def evaluate_validation(
         input_ids = batch["input_ids"].to(device, non_blocking=True)
         labels = batch["labels"].to(device, non_blocking=True)
         mask = batch["mask"].to(device, non_blocking=True)
+        continuation_mask = build_utf8_continuation_mask(input_ids)
 
         with torch.autocast(
             device_type=device.type,
             dtype=training_dtype,
             enabled=device.type == "cuda",
         ):
-            output = model(input_ids=input_ids, mask=mask)
+            output = model(
+                input_ids=input_ids,
+                mask=mask,
+                continuation_mask=continuation_mask,
+                continuation_bias=training_config.byte_boundary_constraint_bias
+                if training_config.byte_boundary_constraint == "utf8-soft"
+                else 0.0,
+            )
             ce_loss = F.cross_entropy(
                 output.logits.reshape(-1, output.logits.shape[-1]),
                 labels.reshape(-1),
@@ -568,11 +607,20 @@ def evaluate_validation(
                 ratio_gap_sum_by_stage.append(0.0)
                 count_by_stage.append(0)
 
+            valid_mask = router_output.valid_mask
+            valid_weight = valid_mask.float()
+            valid_denom = valid_weight.sum().clamp(min=1.0)
             selected_fraction = float(
-                router_output.boundary_mask.float().mean().detach()
+                (
+                    router_output.boundary_mask.float() * valid_weight
+                ).sum().detach()
+                / valid_denom.detach()
             )
             mean_prob = float(
-                router_output.boundary_prob[..., -1].float().mean().detach()
+                (
+                    router_output.boundary_prob[..., -1].float() * valid_weight
+                ).sum().detach()
+                / valid_denom.detach()
             )
             target_ratio = training_config.compression_ratios[
                 min(stage_idx, len(training_config.compression_ratios) - 1)
@@ -584,6 +632,19 @@ def evaluate_validation(
             mean_prob_sum_by_stage[stage_idx] += mean_prob
             ratio_gap_sum_by_stage[stage_idx] += ratio_gap
             count_by_stage[stage_idx] += 1
+
+            if stage_idx == 0:
+                cont_valid = continuation_mask & valid_mask
+                cont_denom = cont_valid.float().sum().clamp(min=1.0)
+                mid_utf8_boundary_fraction = float(
+                    (
+                        router_output.boundary_mask.float() * cont_valid.float()
+                    ).sum().detach()
+                    / cont_denom.detach()
+                )
+                stage0_mid_utf8_boundary_fraction_values.append(
+                    mid_utf8_boundary_fraction
+                )
 
     if processed_batches == 0 or token_count == 0:
         return None
@@ -628,6 +689,12 @@ def evaluate_validation(
         if len(target_ratio_gap_by_stage) > 0
         else float("nan")
     )
+    stage0_mid_utf8_boundary_fraction = (
+        sum(stage0_mid_utf8_boundary_fraction_values)
+        / len(stage0_mid_utf8_boundary_fraction_values)
+        if stage0_mid_utf8_boundary_fraction_values
+        else float("nan")
+    )
     stage1_target_ratio_gap = (
         target_ratio_gap_by_stage[1]
         if len(target_ratio_gap_by_stage) > 1
@@ -663,6 +730,7 @@ def evaluate_validation(
         "target_ratio_gap": target_ratio_gap,
         "actual_selected_fraction": actual_selected_fraction,
         "mean_boundary_probability": mean_boundary_probability,
+        "stage0_mid_utf8_boundary_fraction": stage0_mid_utf8_boundary_fraction,
         "boundary_positions_sample": boundary_positions_sample,
         "stage0_selected_fraction": stage0_selected_fraction,
         "stage1_selected_fraction": stage1_selected_fraction,
@@ -972,6 +1040,7 @@ def train(training_config: TrainingConfig) -> None:
         optimizer.zero_grad(set_to_none=True)
         ce_loss_value = 0.0
         ratio_loss_value = 0.0
+        byte_boundary_loss_value = 0.0
         micro_batches_processed = 0
 
         if lr_total_steps is None:
@@ -1002,13 +1071,24 @@ def train(training_config: TrainingConfig) -> None:
             input_ids = batch["input_ids"].to(device, non_blocking=True)
             labels = batch["labels"].to(device, non_blocking=True)
             mask = batch["mask"].to(device, non_blocking=True)
+            continuation_mask = build_utf8_continuation_mask(input_ids)
+            continuation_bias = (
+                training_config.byte_boundary_constraint_bias
+                if training_config.byte_boundary_constraint == "utf8-soft"
+                else 0.0
+            )
 
             with torch.autocast(
                 device_type=device.type,
                 dtype=training_dtype,
                 enabled=device.type == "cuda",
             ):
-                output = model(input_ids=input_ids, mask=mask)
+                output = model(
+                    input_ids=input_ids,
+                    mask=mask,
+                    continuation_mask=continuation_mask,
+                    continuation_bias=continuation_bias,
+                )
                 ce_loss = F.cross_entropy(
                     output.logits.reshape(-1, output.logits.shape[-1]),
                     labels.reshape(-1),
@@ -1018,7 +1098,23 @@ def train(training_config: TrainingConfig) -> None:
                     training_config.compression_ratios,
                     device,
                 ).to(dtype=ce_loss.dtype)
-                loss = ce_loss + training_config.train_ratio_weight * ratio_loss
+                if (
+                    training_config.byte_boundary_constraint == "utf8-soft"
+                    and output.bpred_output
+                ):
+                    byte_boundary_loss = compute_utf8_boundary_penalty(
+                        output.bpred_output[0],
+                        continuation_mask,
+                        valid_mask=output.bpred_output[0].valid_mask,
+                    ).to(dtype=ce_loss.dtype)
+                else:
+                    byte_boundary_loss = ce_loss.new_zeros(())
+                loss = (
+                    ce_loss
+                    + training_config.train_ratio_weight * ratio_loss
+                    + training_config.byte_boundary_constraint_weight
+                    * byte_boundary_loss
+                )
                 loss = loss / training_config.grad_accum_steps
 
             if use_grad_scaler:
@@ -1027,6 +1123,7 @@ def train(training_config: TrainingConfig) -> None:
                 loss.backward()
             ce_loss_value += float(ce_loss.detach())
             ratio_loss_value += float(ratio_loss.detach())
+            byte_boundary_loss_value += float(byte_boundary_loss.detach())
 
         if micro_batches_processed == 0:
             if training_config.max_steps is None:
@@ -1065,12 +1162,18 @@ def train(training_config: TrainingConfig) -> None:
         completed_steps += 1
         average_ce = ce_loss_value / micro_batches_processed
         average_ratio = ratio_loss_value / micro_batches_processed
-        total_loss = average_ce + training_config.train_ratio_weight * average_ratio
+        average_byte_boundary = byte_boundary_loss_value / micro_batches_processed
+        total_loss = (
+            average_ce
+            + training_config.train_ratio_weight * average_ratio
+            + training_config.byte_boundary_constraint_weight * average_byte_boundary
+        )
         metrics_logger.log(
             step=completed_steps,
             learning_rate=learning_rate,
             ce_loss=average_ce,
             ratio_loss=average_ratio,
+            byte_boundary_loss=average_byte_boundary,
             total_loss=total_loss,
         )
 
@@ -1102,7 +1205,7 @@ def train(training_config: TrainingConfig) -> None:
                     100.0 * completed_steps / float(max(1, training_config.max_steps))
                 )
                 logger.info(
-                    "step=%d/%d epoch_progress=%.2f%%%s lr=%.6g ce_loss=%.4f ratio_loss=%.4f total_loss=%.4f%s %s",
+                    "step=%d/%d epoch_progress=%.2f%%%s lr=%.6g ce_loss=%.4f ratio_loss=%.4f byte_boundary_loss=%.4f total_loss=%.4f%s %s",
                     completed_steps,
                     training_config.max_steps,
                     epoch_progress,
@@ -1110,6 +1213,7 @@ def train(training_config: TrainingConfig) -> None:
                     learning_rate,
                     average_ce,
                     average_ratio,
+                    average_byte_boundary,
                     total_loss,
                     memory_text,
                     optimizer_text,
@@ -1119,25 +1223,27 @@ def train(training_config: TrainingConfig) -> None:
                     100.0 * completed_steps / float(max(1, estimated_optimizer_steps))
                 )
                 logger.info(
-                    "step=%d epoch_progress_est=%.2f%%%s lr=%.6g ce_loss=%.4f ratio_loss=%.4f total_loss=%.4f%s %s",
+                    "step=%d epoch_progress_est=%.2f%%%s lr=%.6g ce_loss=%.4f ratio_loss=%.4f byte_boundary_loss=%.4f total_loss=%.4f%s %s",
                     completed_steps,
                     epoch_progress,
                     packed_progress_text,
                     learning_rate,
                     average_ce,
                     average_ratio,
+                    average_byte_boundary,
                     total_loss,
                     memory_text,
                     optimizer_text,
                 )
             else:
                 logger.info(
-                    "step=%d epoch_progress=unavailable%s lr=%.6g ce_loss=%.4f ratio_loss=%.4f total_loss=%.4f%s %s",
+                    "step=%d epoch_progress=unavailable%s lr=%.6g ce_loss=%.4f ratio_loss=%.4f byte_boundary_loss=%.4f total_loss=%.4f%s %s",
                     completed_steps,
                     packed_progress_text,
                     learning_rate,
                     average_ce,
                     average_ratio,
+                    average_byte_boundary,
                     total_loss,
                     memory_text,
                     optimizer_text,
@@ -1175,7 +1281,7 @@ def train(training_config: TrainingConfig) -> None:
                     metrics=validation_metrics,
                 )
                 logger.info(
-                    "validation step=%d ce=%.4f bpb=%.4f comp(L1/L0)=%.3f comp(L2/L1)=%.3f comp(L2/L0)=%.3f sf0=%.4f sf1=%.4f gap0=%.4f gap1=%.4f",
+                    "validation step=%d ce=%.4f bpb=%.4f comp(L1/L0)=%.3f comp(L2/L1)=%.3f comp(L2/L0)=%.3f sf0=%.4f sf1=%.4f gap0=%.4f gap1=%.4f mid_utf8=%.4f",
                     completed_steps,
                     validation_metrics["validation_ce_loss"],
                     validation_metrics["validation_bpb"],
@@ -1186,6 +1292,7 @@ def train(training_config: TrainingConfig) -> None:
                     validation_metrics["stage1_selected_fraction"],
                     validation_metrics["stage0_target_ratio_gap"],
                     validation_metrics["stage1_target_ratio_gap"],
+                    validation_metrics["stage0_mid_utf8_boundary_fraction"],
                 )
 
             chunk_report_path = save_validation_chunk_reports(

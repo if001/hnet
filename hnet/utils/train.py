@@ -30,9 +30,12 @@ def load_balancing_loss(
     boundary_prob = router_output.boundary_prob
     tokenized_prob = boundary_prob[..., -1]
     boundary_mask = router_output.boundary_mask
+    valid_mask = router_output.valid_mask
+    valid_weight = valid_mask.float()
+    denom = valid_weight.sum().clamp(min=1.0)
 
-    true_ratio = boundary_mask.float().mean()
-    average_prob = tokenized_prob.float().mean()
+    true_ratio = (boundary_mask.float() * valid_weight).sum() / denom
+    average_prob = (tokenized_prob.float() * valid_weight).sum() / denom
 
     return (
         (1 - true_ratio) * (1 - average_prob) +
@@ -87,4 +90,3 @@ def group_params(
             param_groups[idx]["params"].append(param)
     
     return param_groups
-

@@ -208,6 +208,8 @@ class HNet(nn.Module):
         max_seqlen=None,
         mask=None,
         inference_params=None,
+        continuation_mask=None,
+        continuation_bias: float = 0.0,
         **mixer_kwargs,
     ):
         assert mask is not None or (
@@ -260,6 +262,8 @@ class HNet(nn.Module):
             cu_seqlens=cu_seqlens,
             mask=mask,
             inference_params=inference_params.routing_module_state,
+            continuation_mask=continuation_mask if self.stage_idx == 0 else None,
+            continuation_bias=continuation_bias if self.stage_idx == 0 else 0.0,
         )
         hidden_states, next_cu_seqlens, next_max_seqlen, next_mask = self.chunk_layer(
             hidden_states, bpred_output.boundary_mask, cu_seqlens, mask=mask
@@ -271,6 +275,8 @@ class HNet(nn.Module):
             max_seqlen=next_max_seqlen,
             mask=next_mask,
             inference_params=inference_params.main_network_state,
+            continuation_mask=None,
+            continuation_bias=0.0,
             **mixer_kwargs,
         )
 

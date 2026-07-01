@@ -16,6 +16,7 @@ class RoutingModuleOutput:
     boundary_prob: torch.Tensor
     boundary_mask: torch.Tensor
     selected_probs: torch.Tensor
+    valid_mask: torch.Tensor
 
 
 @dataclass
@@ -66,7 +67,15 @@ class RoutingModule(nn.Module):
             ),
         )
 
-    def forward(self, hidden_states, cu_seqlens=None, mask=None, inference_params=None):
+    def forward(
+        self,
+        hidden_states,
+        cu_seqlens=None,
+        mask=None,
+        inference_params=None,
+        continuation_mask=None,
+        continuation_bias: float = 0.0,
+    ):
         assert (mask is not None) or (
             cu_seqlens is not None
         ), "Either mask or cu_seqlens must be provided"
@@ -91,6 +100,16 @@ class RoutingModule(nn.Module):
         # this clamp should no-op as long as no precision issues are encountered
         boundary_prob = torch.clamp(((1 - cos_sim) / 2), min=0.0, max=1.0)
 
+        if continuation_mask is not None and continuation_bias > 0.0:
+            continuation_mask = continuation_mask.to(
+                device=boundary_prob.device, dtype=boundary_prob.dtype
+            )
+            boundary_prob = torch.clamp(
+                boundary_prob - continuation_bias * continuation_mask,
+                min=0.0,
+                max=1.0,
+            )
+
         # Force boundary probability of the first element to 1.0
         PAD_PROB = 1.0
         boundary_prob = F.pad(boundary_prob, (1, 0), "constant", PAD_PROB)
@@ -104,6 +123,10 @@ class RoutingModule(nn.Module):
         selected_idx = torch.argmax(boundary_prob, dim=-1)
 
         boundary_mask = selected_idx == 1  # (shape hidden_states.shape[:-1])
+        if mask is not None:
+            valid_mask = mask
+        else:
+            valid_mask = torch.ones_like(boundary_mask, dtype=torch.bool)
         if mask is not None:
             # No invalid tokens can be selected
             boundary_mask = boundary_mask & mask
@@ -135,6 +158,7 @@ class RoutingModule(nn.Module):
             boundary_prob=boundary_prob,  # (shape hidden_states.shape[:-1], 2)
             boundary_mask=boundary_mask,  # (shape hidden_states.shape[:-1])
             selected_probs=selected_probs,  # (shape hidden_states.shape[:-1], 1)
+            valid_mask=valid_mask,  # (shape hidden_states.shape[:-1])
         )
 
     def step(self, hidden_states, inference_params):
@@ -161,6 +185,7 @@ class RoutingModule(nn.Module):
             boundary_prob=boundary_prob,  # (B, 2)
             boundary_mask=boundary_prob[..., 1] > 0.5,  # (B,)
             selected_probs=boundary_prob.max(dim=-1).values.unsqueeze(-1),  # (B, 1)
+            valid_mask=torch.ones_like(boundary_prob[..., 1], dtype=torch.bool),  # (B,)
         )
 
 

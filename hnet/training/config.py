@@ -39,6 +39,9 @@ class TrainingConfig:
     validation_max_batches: int = 20
     validation_split_ratio: float = 0.1
     train_ratio_weight: float = 0.02
+    byte_boundary_constraint: str = "off"
+    byte_boundary_constraint_weight: float = 0.0
+    byte_boundary_constraint_bias: float = 0.0
     compression_ratios: list[float] = field(default_factory=lambda: [4.0])
     lr_multipliers: list[float] = field(default_factory=lambda: [1.0, 1.0])
     seed: int = 42

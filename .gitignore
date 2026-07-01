@@ -194,3 +194,4 @@ cython_debug/
 .cursorindexingignore
 
 llm-jp-eval
+/.agent-shell/

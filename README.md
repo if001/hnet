@@ -133,9 +133,15 @@ python train.py \
 ```
 
 主な引数:
-- `--byte-boundary-constraint utf8-soft` で制約を有効化
-- `--byte-boundary-constraint-bias` は stage0 routing の boundary 確率を continuation byte 上でどれだけ下げるか
-- `--byte-boundary-constraint-weight` は continuation byte 上の boundary 確率に対する補助損失の重み
+- --byte-boundary-constraint utf8-softで制約を有効化
+
+- --byte-boundary-constraint-bias
+  stage0 の forward 時に、continuation byte 上の boundary 確率を直接下げます。
+  こちらは 推論時の実際の chunking に即効で効く パラメータです。
+
+- --byte-boundary-constraint-weight
+  continuation byte 上で boundary を出したときの補助 loss の重みです。
+  こちらは 学習全体をその方向へ寄せる パラメータです。
 
 
 ## Metrics

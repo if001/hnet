@@ -100,6 +100,10 @@ class RoutingModule(nn.Module):
         # this clamp should no-op as long as no precision issues are encountered
         boundary_prob = torch.clamp(((1 - cos_sim) / 2), min=0.0, max=1.0)
 
+        # Force boundary probability of the first element to 1.0
+        PAD_PROB = 1.0
+        boundary_prob = F.pad(boundary_prob, (1, 0), "constant", PAD_PROB)
+
         if continuation_mask is not None and continuation_bias > 0.0:
             continuation_mask = continuation_mask.to(
                 device=boundary_prob.device, dtype=boundary_prob.dtype
@@ -109,10 +113,6 @@ class RoutingModule(nn.Module):
                 min=0.0,
                 max=1.0,
             )
-
-        # Force boundary probability of the first element to 1.0
-        PAD_PROB = 1.0
-        boundary_prob = F.pad(boundary_prob, (1, 0), "constant", PAD_PROB)
 
         if cu_seqlens is not None:
             boundary_prob = boundary_prob.squeeze(0)

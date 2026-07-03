@@ -92,7 +92,7 @@ SOURCES_JA45_EN45_CODE1: list[DatasetSource] = [
 ]
 
 
-SOURCES_JA8_EN1_CODE1: list[DatasetSource] = [
+SOURCES_JA8_EN1_CODE1_5: list[DatasetSource] = [
     DatasetSource(
         name="hotchpotch/fineweb-2-edu-japanese",
         config_name="small_tokens_cleaned",

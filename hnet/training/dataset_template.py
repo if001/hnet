@@ -59,7 +59,7 @@ SOURCES_CODE: list[DatasetSource] = [
     ),
 ]
 # EN only
-SOURCES_JA8_EN1_CODE1: list[DatasetSource] = [
+SOURCES_EN: list[DatasetSource] = [
     DatasetSource(
         name="HuggingFaceFW/fineweb-edu",
         config_name="sample-10BT",

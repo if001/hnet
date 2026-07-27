@@ -143,6 +143,21 @@ python train.py \
   continuation byte 上で boundary を出したときの補助 loss の重みです。
   こちらは 学習全体をその方向へ寄せる パラメータです。
 
+弱め
+```sh
+--byte-boundary-constraint utf8-soft \
+--byte-boundary-constraint-bias 0.02 \
+--byte-boundary-constraint-weight 0.01 \
+
+```
+
+強め
+``` sh
+--byte-boundary-constraint utf8-soft \
+--byte-boundary-constraint-bias 0.1 \
+--byte-boundary-constraint-weight 0.05 \
+
+```
 
 ## Metrics
 学習ログは `training_metrics.csv` に保存されます。あとから PNG に描画できます。
@@ -191,6 +206,19 @@ python train.py \
 --model-path artifacts/hnet_1stage_100m/checkpoint_step_000020.pt \
 --config-path artifacts/hnet_1stage_100m/model_config.json
 ```
+
+## 学習後の validation metrics 出力
+
+学習済み checkpoint と validation 用の dataset template を指定すると、学習中と同じ列を持つ `validation_metrics.csv` を出力できます。checkpoint と同じディレクトリの `model_config.json` と `training_config.json` は自動的に読み込まれます。
+
+```sh
+python validate.py \
+    --model-path artifacts/hnet_1stage_100m/checkpoint_step_000020.pt \
+    --validation-dataset-template SOURCES_JA8_EN1_CODE1 \
+    --validation-max-batches 20
+```
+
+出力先の既定値は checkpoint と同じディレクトリの `validation_metrics_post_training.csv` です。学習中に作成した `validation_metrics.csv` は上書きしません。任意の出力先にする場合は `--output-path` を指定します。保存時とファイル配置が異なる場合は `--model-config-path` と `--training-config-path` も指定できます。
 
 ## chunking
 

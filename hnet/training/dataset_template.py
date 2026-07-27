@@ -34,6 +34,38 @@ SOURCES_JA8_EN1_CODE1: list[DatasetSource] = [
     ),
 ]
 
+# JA only
+SOURCES_JA: list[DatasetSource] = [
+    DatasetSource(
+        name="hotchpotch/fineweb-2-edu-japanese",
+        config_name="small_tokens_cleaned",
+        split="train",
+        take_examples=5_000,
+        skip_examples=10_000,  ## 先頭10000件スキップが推奨
+    ),
+    DatasetSource(
+        name="wikimedia/wikipedia",
+        config_name="20231101.ja",
+        split="train",
+        take_examples=5_000,
+    ),
+]
+# CODE only
+SOURCES_CODE: list[DatasetSource] = [
+    DatasetSource(
+        name="codeparrot/codeparrot-clean",
+        split="train",
+        take_examples=10_000,
+    ),
+]
+# EN only
+SOURCES_JA8_EN1_CODE1: list[DatasetSource] = [
+    DatasetSource(
+        name="HuggingFaceFW/fineweb-edu",
+        config_name="sample-10BT",
+        split="train",
+        take_examples=10_000,
+    ),
 
 # 9:0:1
 SOURCES_JA9_EN0_CODE1: list[DatasetSource] = [

@@ -66,7 +66,7 @@ SOURCES_JA8_EN1_CODE1: list[DatasetSource] = [
         split="train",
         take_examples=10_000,
     ),
-
+]
 # 9:0:1
 SOURCES_JA9_EN0_CODE1: list[DatasetSource] = [
     DatasetSource(

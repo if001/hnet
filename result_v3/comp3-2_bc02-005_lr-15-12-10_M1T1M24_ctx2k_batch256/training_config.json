@@ -1,0 +1,53 @@
+{
+    "model_config_path": "configs/hnet_2stage_200m.json",
+    "output_dir": "/content/drive/MyDrive/hnet/artifacts_v2/comp3-2_bc02-005_lr-15-12-10_M1T1M24_ctx2k_batch256",
+    "datasets": [],
+    "packed_data_dir": "/content/SOURCES_JA8_EN1_CODE1_5_2k",
+    "packed_validation_data_dir": null,
+    "validation_datasets": null,
+    "chunk_prompts": [
+        "猫が机の下で眠っている。",
+        "彼は、「今日は休みです」と言った。",
+        "エラーはmain.pyの42行目で起きた。",
+        "高性能計算機資源を利用した。",
+        "彼女は笑って、それから静かに去った。",
+        "今日は2026年4月7日です。",
+        "今日は天気が良いです。明日も天気が良いかもしれない。",
+        "赤い花が庭に咲いた。明日も天気が良いだろうからこのまま綺麗に咲いてほしい。",
+        "庭にいくつか種をまいた。来年には綺麗な赤い花が咲くだろう。"
+    ],
+    "seq_len": 2048,
+    "batch_size": 32,
+    "grad_accum_steps": 16,
+    "max_steps": null,
+    "learning_rate": 0.00035,
+    "min_learning_rate": 3e-05,
+    "warmup_steps": 20,
+    "weight_decay": 0.1,
+    "grad_clip_norm": 1.0,
+    "log_every": 500,
+    "save_every": 5000,
+    "validation_every": 500,
+    "validation_max_batches": 20,
+    "validation_split_ratio": 0.05,
+    "train_ratio_weight": 0.02,
+    "byte_boundary_constraint": "utf8-soft",
+    "byte_boundary_constraint_weight": 0.05,
+    "byte_boundary_constraint_bias": 0.2,
+    "compression_ratios": [
+        3.0,
+        2.0
+    ],
+    "lr_multipliers": [
+        1.5,
+        1.2,
+        1.0
+    ],
+    "seed": 42,
+    "num_workers": 4,
+    "shuffle_buffer_size": 512,
+    "resume_from_checkpoint": null,
+    "resume_optimizer": true,
+    "resume_step": true,
+    "rope_scaling": null
+}

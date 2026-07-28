@@ -1,0 +1,26 @@
+datasets:
+  - jamp
+  - janli
+  - jnli
+  - jsick
+
+categories:
+  NLI:
+    description: "Natural Language Inference"
+    default_metric: exact_match
+    metrics: {}
+    datasets:
+      - jamp
+      - janli
+      - jnli
+      - jsick
+
+dataset_info_overrides:
+  jamp:
+    answer_pattern_id: custom
+  janli:
+    answer_pattern_id: custom
+  jnli:
+    answer_pattern_id: custom
+  jsick:
+    answer_pattern_id: custom

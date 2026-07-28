@@ -1,0 +1,30 @@
+datasets:
+  - jemhopqa
+  - niilc
+  - aio
+  - triviaqa
+  - drop
+categories:
+  QA:
+    description: "Question Answering"
+    default_metric: exact_match
+    metrics:
+      triviaqa: triviaqa_f1
+      drop: drop_f1
+    datasets:
+      - jemhopqa
+      - niilc
+      - aio
+      - triviaqa
+      - drop
+dataset_info_overrides:
+  jemhopqa:
+    answer_pattern_id: custom
+  niilc:
+    answer_pattern_id: custom
+  aio:
+    answer_pattern_id: custom
+  triviaqa:
+    answer_pattern_id: custom
+  drop:
+    answer_pattern_id: custom

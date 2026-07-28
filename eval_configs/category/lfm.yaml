@@ -1,0 +1,39 @@
+datasets:
+  - jmmlu
+  - mif_eval_ja
+
+categories:
+  HE-JA:
+    description: "Human Examination Japanese"
+    default_metric: exact_match
+    metrics: {}
+    datasets:
+      - jmmlu
+
+  IF:
+    description: "Instruction Following"
+    default_metric: mifeval_loose
+    metrics:
+      mif_eval_ja: mifeval_loose
+    datasets:
+      - mif_eval_ja
+
+dataset_info_overrides:
+  jmmlu:
+    num_few_shots: 0
+    output_length: 32
+    answer_pattern_id: custom
+    answer_extract_pattern: "(?s).*答え[:：]\\s*([A-D]).*"
+    custom_prompt_template: |
+      与えられた選択問題に答えてください。回答の最後の行に「答え：A/B/C/D」のように出力してください（例：「答え：A」）。
+
+      {{ input }}
+
+  mif_eval_ja:
+    num_few_shots: 0
+    output_length: 1024
+    metrics:
+      - mifeval_strict
+      - mifeval_loose
+    custom_prompt_template: |
+      {{ input }}

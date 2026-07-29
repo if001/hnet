@@ -3,6 +3,7 @@ import json
 import logging
 import math
 import random
+import time
 from dataclasses import asdict
 from pathlib import Path
 from typing import Any, Mapping
@@ -40,6 +41,11 @@ class TrainingMetricsLogger:
         "ratio_loss",
         "byte_boundary_loss",
         "total_loss",
+        "elapsed_seconds",
+        "step_seconds",
+        "input_bytes",
+        "input_bytes_per_second",
+        "cuda_peak_allocated_mb",
     ]
 
     def __init__(self, output_path: Path, append: bool = False) -> None:
@@ -50,6 +56,23 @@ class TrainingMetricsLogger:
 
     def _initialize_file(self) -> None:
         if self.append and self.output_path.exists():
+            with self.output_path.open(encoding="utf-8", newline="") as handle:
+                reader = csv.DictReader(handle)
+                existing_fieldnames = reader.fieldnames or []
+                existing_rows = list(reader)
+            if existing_fieldnames == self.fieldnames:
+                return
+            if not set(existing_fieldnames).issubset(self.fieldnames):
+                raise ValueError(
+                    "Existing training metrics columns are incompatible: "
+                    f"{existing_fieldnames}"
+                )
+            with self.output_path.open(
+                "w", encoding="utf-8", newline=""
+            ) as handle:
+                writer = csv.DictWriter(handle, fieldnames=self.fieldnames)
+                writer.writeheader()
+                writer.writerows(existing_rows)
             return
         with self.output_path.open("w", encoding="utf-8", newline="") as handle:
             writer = csv.DictWriter(handle, fieldnames=self.fieldnames)
@@ -63,6 +86,11 @@ class TrainingMetricsLogger:
         ratio_loss: float,
         byte_boundary_loss: float,
         total_loss: float,
+        elapsed_seconds: float,
+        step_seconds: float,
+        input_bytes: int,
+        input_bytes_per_second: float,
+        cuda_peak_allocated_mb: float,
     ) -> None:
         with self.output_path.open("a", encoding="utf-8", newline="") as handle:
             writer = csv.DictWriter(handle, fieldnames=self.fieldnames)
@@ -74,6 +102,11 @@ class TrainingMetricsLogger:
                     "ratio_loss": ratio_loss,
                     "byte_boundary_loss": byte_boundary_loss,
                     "total_loss": total_loss,
+                    "elapsed_seconds": elapsed_seconds,
+                    "step_seconds": step_seconds,
+                    "input_bytes": input_bytes,
+                    "input_bytes_per_second": input_bytes_per_second,
+                    "cuda_peak_allocated_mb": cuda_peak_allocated_mb,
                 }
             )
 
@@ -1028,6 +1061,9 @@ def train(training_config: TrainingConfig) -> None:
 
     model.train()
     scaler = torch.amp.GradScaler("cuda", enabled=use_grad_scaler)
+    if device.type == "cuda":
+        torch.cuda.reset_peak_memory_stats(device)
+    training_started_at = time.perf_counter()
 
     last_saved_step = 0
     completed_steps = resumed_step
@@ -1037,11 +1073,13 @@ def train(training_config: TrainingConfig) -> None:
     while (
         training_config.max_steps is None or completed_steps < training_config.max_steps
     ):
+        step_started_at = time.perf_counter()
         optimizer.zero_grad(set_to_none=True)
         ce_loss_value = 0.0
         ratio_loss_value = 0.0
         byte_boundary_loss_value = 0.0
         micro_batches_processed = 0
+        input_bytes_processed = 0
 
         if lr_total_steps is None:
             if completed_steps < training_config.warmup_steps:
@@ -1069,6 +1107,7 @@ def train(training_config: TrainingConfig) -> None:
             micro_batches_processed += 1
             data_micro_batches_seen += 1
             input_ids = batch["input_ids"].to(device, non_blocking=True)
+            input_bytes_processed += int(input_ids.numel())
             labels = batch["labels"].to(device, non_blocking=True)
             mask = batch["mask"].to(device, non_blocking=True)
             continuation_mask = build_utf8_continuation_mask(input_ids)
@@ -1159,6 +1198,16 @@ def train(training_config: TrainingConfig) -> None:
         else:
             optimizer.step()
 
+        if device.type == "cuda":
+            torch.cuda.synchronize(device)
+        step_seconds = time.perf_counter() - step_started_at
+        elapsed_seconds = time.perf_counter() - training_started_at
+        input_bytes_per_second = input_bytes_processed / max(step_seconds, 1e-12)
+        cuda_peak_allocated_mb = (
+            torch.cuda.max_memory_allocated(device) / (1024**2)
+            if device.type == "cuda"
+            else float("nan")
+        )
         completed_steps += 1
         average_ce = ce_loss_value / micro_batches_processed
         average_ratio = ratio_loss_value / micro_batches_processed
@@ -1175,6 +1224,11 @@ def train(training_config: TrainingConfig) -> None:
             ratio_loss=average_ratio,
             byte_boundary_loss=average_byte_boundary,
             total_loss=total_loss,
+            elapsed_seconds=elapsed_seconds,
+            step_seconds=step_seconds,
+            input_bytes=input_bytes_processed,
+            input_bytes_per_second=input_bytes_per_second,
+            cuda_peak_allocated_mb=cuda_peak_allocated_mb,
         )
 
         if completed_steps % training_config.log_every == 0 or completed_steps == 1:

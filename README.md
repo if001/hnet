@@ -21,6 +21,27 @@ einops optree regex omegaconf \
 `--dataset` を指定した場合はそれを優先し、未指定時は `--dataset-template` を使えます。
 `--max-steps` を省略した場合は 1epoch で終了します（streaming / packed の両方）。
 
+### Kimi Delta Attention
+
+main network の architecture layout では `K` を Kimi Delta Attention +
+SwiGLU FFN の1層として指定できます（小文字の `k` は FFN なし）。例えば
+`"K1T1"` は KDA 1層と通常の Transformer 1層です。KDA を使う場合は
+`pip install -e '.[kda]'` で `fla-core` もインストールし、model config に
+stage ごとの設定を追加します。
+
+```json
+"kda_cfg": {
+    "num_heads": [8, 8, 12],
+    "head_dim": [64, 64, 64],
+    "short_conv_kernel_size": 4
+}
+```
+
+各 stage で `d_model == num_heads * head_dim` が必要です。KDA は通常の
+attention と異なり RoPE を使わず、causal short convolution と gated delta
+recurrence 自体が系列順序を表します。このため既存の `attn_cfg` の
+`rotary_emb_dim` と `window_size` は `K` 層には適用されません。
+
 ```sh
 !python train.py \
 --dataset-template SOURCES_JA9_EN0_CODE1 \

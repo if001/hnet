@@ -1,6 +1,7 @@
 from .config_hnet import (
     AttnConfig,
     HNetConfig,
+    KDAConfig,
     SSMConfig,
 )
 from .config_io import load_hnet_config

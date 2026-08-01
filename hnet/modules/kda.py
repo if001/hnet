@@ -52,9 +52,15 @@ class KimiDeltaAttention(nn.Module):
         self.q_proj = nn.Linear(d_model, d_model, bias=False, **factory_kwargs)
         self.k_proj = nn.Linear(d_model, d_model, bias=False, **factory_kwargs)
         self.v_proj = nn.Linear(d_model, d_model, bias=False, **factory_kwargs)
-        self.q_conv1d = ShortConvolution(d_model, short_conv_kernel_size, activation="silu")
-        self.k_conv1d = ShortConvolution(d_model, short_conv_kernel_size, activation="silu")
-        self.v_conv1d = ShortConvolution(d_model, short_conv_kernel_size, activation="silu")
+        self.q_conv1d = ShortConvolution(
+            d_model, short_conv_kernel_size, activation="silu", **factory_kwargs
+        )
+        self.k_conv1d = ShortConvolution(
+            d_model, short_conv_kernel_size, activation="silu", **factory_kwargs
+        )
+        self.v_conv1d = ShortConvolution(
+            d_model, short_conv_kernel_size, activation="silu", **factory_kwargs
+        )
         self.A_log = nn.Parameter(
             torch.empty(num_heads, device=device, dtype=torch.float32)
         )

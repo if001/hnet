@@ -63,7 +63,14 @@ class Isotropic(nn.Module):
         for _ in range(stage_idx):
             arch_layout = arch_layout[1]
         arch_layout = arch_layout[pos_idx]
-        layout_parse = re.findall(r"([mMtT])(\d+)", arch_layout)
+        layout_parse = re.findall(r"([kKmMtT])(\d+)", arch_layout)
+        if "".join(f"{arch}{count}" for arch, count in layout_parse) != arch_layout:
+            raise ValueError(f"Invalid architecture layout: {arch_layout!r}")
+        self.kda_cfg = (
+            get_stage_cfg(config.kda_cfg, stage_idx)
+            if any(arch in ("k", "K") for arch, _ in layout_parse)
+            else {}
+        )
 
         layers = []
         layer_idx = 0
@@ -72,7 +79,7 @@ class Isotropic(nn.Module):
         # self.height counts the number of things that get added to the residual stream
         self.height = 0
         for arch, n_layer in layout_parse:
-            assert arch in ("m", "M", "t", "T")
+            assert arch in ("m", "M", "t", "T", "k", "K")
             assert n_layer.isdigit()
             layers += [
                 create_block(
@@ -81,6 +88,7 @@ class Isotropic(nn.Module):
                     d_intermediate=config.d_intermediate[self.stage_idx],
                     ssm_cfg=self.ssm_cfg,
                     attn_cfg=self.attn_cfg,
+                    kda_cfg=self.kda_cfg,
                     layer_idx=(layer_idx + i),
                     **factory_kwargs,
                 )
@@ -160,8 +168,16 @@ class Isotropic(nn.Module):
                 if hidden_states.dim() == 3 and packed:
                     hidden_states = hidden_states.squeeze(0)
                     residual = None if residual is None else residual.squeeze(0)
+            elif arch in ("k", "K"):
+                layer_mixer_kwargs = ssm_mixer_kwargs
+                if mask is not None:
+                    layer_mixer_kwargs = copy.deepcopy(layer_mixer_kwargs)
+                    layer_mixer_kwargs["attention_mask"] = mask
+                if hidden_states.dim() == 2:
+                    hidden_states = hidden_states.unsqueeze(0)
+                    residual = None if residual is None else residual.unsqueeze(0)
             else:
-                # Currently supporting only Mamba2 and MHA
+                # Currently supporting Mamba2, MHA, and Kimi Delta Attention.
                 raise NotImplementedError
 
             hidden_states, residual = layer(

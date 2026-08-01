@@ -38,6 +38,7 @@ def create_block(
     d_intermediate=None,
     ssm_cfg=dict(),
     attn_cfg=dict(),
+    kda_cfg=dict(),
     norm_epsilon=1e-5,
     layer_idx=None,
     residual_in_fp32=True,
@@ -51,6 +52,13 @@ def create_block(
         mixer_cls = partial(
             CausalMHA, **attn_cfg, **factory_kwargs, layer_idx=layer_idx
         )
+    elif arch in ("k", "K"):
+        # Keep fla-core optional for existing Mamba/MHA configurations.
+        from .kda import KimiDeltaAttention
+
+        mixer_cls = partial(
+            KimiDeltaAttention, **kda_cfg, **factory_kwargs, layer_idx=layer_idx
+        )
     elif arch in ("m", "M"):
         mixer_cls = partial(
             Mamba2Wrapper, **ssm_cfg, **factory_kwargs, layer_idx=layer_idx
@@ -59,13 +67,13 @@ def create_block(
         raise NotImplementedError
 
     # MLP
-    if arch in ("T", "M"):
+    if arch in ("T", "M", "K"):
         mlp_cls = partial(
             SwiGLU,
             d_intermediate=d_intermediate,
             **factory_kwargs,
         )
-    elif arch in ("t", "m"):
+    elif arch in ("t", "m", "k"):
         mlp_cls = nn.Identity
     else:
         raise NotImplementedError

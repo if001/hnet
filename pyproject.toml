@@ -26,6 +26,9 @@ dependencies = [
     "rich>=13.9.0",
     "matplotlib>=3.9.0",
 ]
+
+[project.optional-dependencies]
+kda = ["fla-core"]
 [project.urls]
 Repository = "https://github.com/goombalab/hnet"
 

@@ -103,22 +103,17 @@ class KimiDeltaAttention(nn.Module):
     ):
         del kwargs
         cache = self._cache(inference_params)
-        padded_shape = None
-        valid_indices = None
+        output_mask = None
         if attention_mask is not None and not bool(torch.all(attention_mask)):
             if cache is not None:
                 raise ValueError("KDA cache does not support a padded attention mask")
             if attention_mask.dim() != 2:
                 raise ValueError("KDA attention_mask must have shape [batch, sequence]")
-            padded_shape = hidden_states.shape[:2]
-            valid_indices = torch.nonzero(
-                attention_mask.reshape(-1), as_tuple=False
-            ).flatten()
-            lengths = attention_mask.sum(dim=-1, dtype=torch.int32)
-            cu_seqlens = torch.cat(
-                [lengths.new_zeros(1), lengths.cumsum(dim=0)], dim=0
-            )
-            hidden_states = hidden_states.flatten(0, 1)[valid_indices].unsqueeze(0)
+            attention_mask = attention_mask.bool()
+            if bool((attention_mask[:, 1:] & ~attention_mask[:, :-1]).any()):
+                raise ValueError("KDA attention_mask must use right padding")
+            output_mask = attention_mask.unsqueeze(-1)
+            hidden_states = hidden_states * output_mask
         conv_states = (None, None, None) if cache is None else cache["conv"]
         recurrent_state = None if cache is None else cache["recurrent"]
         use_cache = cache is not None
@@ -150,12 +145,8 @@ class KimiDeltaAttention(nn.Module):
         gate = rearrange(gate, "... (h d) -> ... h d", d=self.head_dim)
         output = self.o_norm(output, gate)
         output = self.o_proj(rearrange(output, "b t h d -> b t (h d)"))
-        if padded_shape is not None:
-            batch_size, sequence_length = padded_shape
-            padded = output.new_zeros(batch_size * sequence_length, self.d_model)
-            output = padded.index_copy(0, valid_indices, output.squeeze(0)).view(
-                batch_size, sequence_length, self.d_model
-            )
+        if output_mask is not None:
+            output = output * output_mask
         return output
 
     def step(self, hidden_states, inference_params):

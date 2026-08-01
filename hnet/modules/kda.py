@@ -102,9 +102,23 @@ class KimiDeltaAttention(nn.Module):
         **kwargs,
     ):
         del kwargs
-        if attention_mask is not None and not bool(torch.all(attention_mask)):
-            raise ValueError("KDA currently supports packed input or an all-true mask")
         cache = self._cache(inference_params)
+        padded_shape = None
+        valid_indices = None
+        if attention_mask is not None and not bool(torch.all(attention_mask)):
+            if cache is not None:
+                raise ValueError("KDA cache does not support a padded attention mask")
+            if attention_mask.dim() != 2:
+                raise ValueError("KDA attention_mask must have shape [batch, sequence]")
+            padded_shape = hidden_states.shape[:2]
+            valid_indices = torch.nonzero(
+                attention_mask.reshape(-1), as_tuple=False
+            ).flatten()
+            lengths = attention_mask.sum(dim=-1, dtype=torch.int32)
+            cu_seqlens = torch.cat(
+                [lengths.new_zeros(1), lengths.cumsum(dim=0)], dim=0
+            )
+            hidden_states = hidden_states.flatten(0, 1)[valid_indices].unsqueeze(0)
         conv_states = (None, None, None) if cache is None else cache["conv"]
         recurrent_state = None if cache is None else cache["recurrent"]
         use_cache = cache is not None
@@ -135,7 +149,14 @@ class KimiDeltaAttention(nn.Module):
         gate = self.g_proj(hidden_states) if self.use_full_rank_gate else self.g_b_proj(self.g_a_proj(hidden_states))
         gate = rearrange(gate, "... (h d) -> ... h d", d=self.head_dim)
         output = self.o_norm(output, gate)
-        return self.o_proj(rearrange(output, "b t h d -> b t (h d)"))
+        output = self.o_proj(rearrange(output, "b t h d -> b t (h d)"))
+        if padded_shape is not None:
+            batch_size, sequence_length = padded_shape
+            padded = output.new_zeros(batch_size * sequence_length, self.d_model)
+            output = padded.index_copy(0, valid_indices, output.squeeze(0)).view(
+                batch_size, sequence_length, self.d_model
+            )
+        return output
 
     def step(self, hidden_states, inference_params):
         return self.forward(hidden_states, inference_params=inference_params)

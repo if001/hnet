@@ -81,6 +81,31 @@ def check_packed_isolation(layer: KimiDeltaAttention) -> float:
 
 
 @torch.no_grad()
+def check_padded_isolation(layer: KimiDeltaAttention) -> float:
+    layer.eval()
+    lengths = (31, 37)
+    hidden = torch.randn(2, max(lengths), 64, device="cuda", dtype=torch.bfloat16)
+    mask = torch.arange(max(lengths), device="cuda").unsqueeze(0) < torch.tensor(
+        lengths, device="cuda"
+    ).unsqueeze(1)
+    padded = layer(hidden, attention_mask=mask)
+    references = []
+    for batch_index, length in enumerate(lengths):
+        local_cu = torch.tensor([0, length], device="cuda", dtype=torch.int32)
+        references.append(layer(hidden[batch_index : batch_index + 1, :length], cu_seqlens=local_cu))
+    error = max(
+        float((padded[index, :length] - references[index].squeeze(0)).abs().max())
+        for index, length in enumerate(lengths)
+    )
+    if error > 2e-2:
+        raise AssertionError(f"padded batch state leakage: max_abs_error={error}")
+    for batch_index, length in enumerate(lengths):
+        if not bool((padded[batch_index, length:] == 0).all()):
+            raise AssertionError("padded KDA output must remain zero")
+    return error
+
+
+@torch.no_grad()
 def check_recurrent_decode(layer: KimiDeltaAttention) -> float:
     layer.eval()
     length = 48
@@ -231,6 +256,7 @@ def main() -> None:
         "linear_gate_backward_loss": check_backward(linear_layer),
         "k3_gate_backward_loss": check_backward(k3_layer),
         "packed_isolation_max_abs_error": check_packed_isolation(k3_layer),
+        "padded_isolation_max_abs_error": check_padded_isolation(k3_layer),
         "recurrent_decode_max_abs_error": check_recurrent_decode(k3_layer),
         "one_stage_overfit_resume": check_overfit_and_resume(
             args.one_stage_config, output_dir, args.overfit_steps

@@ -79,7 +79,9 @@ class KimiDeltaAttention(nn.Module):
         else:
             self.g_a_proj = nn.Linear(d_model, head_dim, bias=False, **factory_kwargs)
             self.g_b_proj = nn.Linear(head_dim, d_model, bias=False, **factory_kwargs)
-        self.o_norm = FusedRMSNormGated(head_dim, eps=1e-5, activation="sigmoid")
+        self.o_norm = FusedRMSNormGated(
+            head_dim, eps=1e-5, activation="sigmoid", **factory_kwargs
+        )
         self.o_proj = nn.Linear(d_model, d_model, bias=False, **factory_kwargs)
 
     def allocate_inference_cache(self, batch_size, max_seqlen, dtype=None, **kwargs):

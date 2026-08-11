@@ -63,12 +63,18 @@ class Isotropic(nn.Module):
         for _ in range(stage_idx):
             arch_layout = arch_layout[1]
         arch_layout = arch_layout[pos_idx]
-        layout_parse = re.findall(r"([kKmMtT])(\d+)", arch_layout)
+        layout_parse = re.findall(r"([gGkKmMtT])(\d+)", arch_layout)
         if "".join(f"{arch}{count}" for arch, count in layout_parse) != arch_layout:
             raise ValueError(f"Invalid architecture layout: {arch_layout!r}")
         self.kda_cfg = (
             get_stage_cfg(config.kda_cfg, stage_idx)
             if any(arch in ("k", "K") for arch, _ in layout_parse)
+            else {}
+        )
+
+        self.mla_cfg = (
+            get_stage_cfg(config.mla_cfg, stage_idx)
+            if any(arch in ("g", "G") for arch, _ in layout_parse)
             else {}
         )
 
@@ -79,7 +85,7 @@ class Isotropic(nn.Module):
         # self.height counts the number of things that get added to the residual stream
         self.height = 0
         for arch, n_layer in layout_parse:
-            assert arch in ("m", "M", "t", "T", "k", "K")
+            assert arch in ("m", "M", "t", "T", "k", "K", "g", "G")
             assert n_layer.isdigit()
             layers += [
                 create_block(
@@ -89,6 +95,7 @@ class Isotropic(nn.Module):
                     ssm_cfg=self.ssm_cfg,
                     attn_cfg=self.attn_cfg,
                     kda_cfg=self.kda_cfg,
+                    mla_cfg=self.mla_cfg,
                     layer_idx=(layer_idx + i),
                     **factory_kwargs,
                 )
@@ -163,7 +170,7 @@ class Isotropic(nn.Module):
                 if hidden_states.dim() == 2:
                     hidden_states = hidden_states.unsqueeze(0)
                     residual = None if residual is None else residual.unsqueeze(0)
-            elif arch in ("t", "T"):
+            elif arch in ("t", "T", "g", "G"):
                 layer_mixer_kwargs = attn_mixer_kwargs
                 if hidden_states.dim() == 3 and packed:
                     hidden_states = hidden_states.squeeze(0)
@@ -177,7 +184,7 @@ class Isotropic(nn.Module):
                     hidden_states = hidden_states.unsqueeze(0)
                     residual = None if residual is None else residual.unsqueeze(0)
             else:
-                # Currently supporting Mamba2, MHA, and Kimi Delta Attention.
+                # Currently supporting Mamba2, MHA, KDA, and gated MLA.
                 raise NotImplementedError
 
             hidden_states, residual = layer(

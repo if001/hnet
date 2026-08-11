@@ -42,6 +42,34 @@ attention と異なり RoPE を使わず、causal short convolution と gated de
 recurrence 自体が系列順序を表します。このため既存の `attn_cfg` の
 `rotary_emb_dim` と `window_size` は `K` 層には適用されません。
 
+### Gated Multi-Latent Attention
+
+architecture layout では `G` を Kimi K3 と同じ Gated MLA + SwiGLU FFN
+の1層として指定できます（小文字の `g` は FFN なし）。例えば `"K3G1"` は
+KDA 3層と Gated MLA 1層です。`G` は通常の Transformer (`T`) の単なる
+再利用ではなく、query と key/value の低ランク圧縮、全 head で共有する key
+成分、および sigmoid output gate を持つ専用実装です。
+
+```json
+"mla_cfg": {
+    "num_heads": [8, 8, 12],
+    "q_lora_rank": [256, 256, 384],
+    "kv_lora_rank": [128, 128, 192],
+    "qk_nope_head_dim": [48, 48, 48],
+    "qk_rope_head_dim": [16, 16, 16],
+    "v_head_dim": [48, 48, 48],
+    "use_output_gate": true
+}
+```
+
+Kimi K3 の text model は `mla_use_nope=true` であり、参照実装でも MLA に
+RoPE を適用していません。このため H-Net の `G` も NoPE を維持します。
+`qk_rope_head_dim` はチェックポイント/config との対応のため名前を保持しますが、
+実際には回転させず、全 head 共通の追加 key 成分として使います。したがって
+`attn_cfg.rotary_emb_dim` と `window_size` は `G` 層には適用されません。
+FlashAttention の制約上 `v_head_dim <= qk_nope_head_dim + qk_rope_head_dim`
+が必要です。
+
 ```sh
 !python train.py \
 --dataset-template SOURCES_JA9_EN0_CODE1 \

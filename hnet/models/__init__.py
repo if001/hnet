@@ -2,6 +2,7 @@ from .config_hnet import (
     AttnConfig,
     HNetConfig,
     KDAConfig,
+    MLAConfig,
     SSMConfig,
 )
 from .config_io import load_hnet_config

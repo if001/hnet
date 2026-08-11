@@ -30,6 +30,19 @@ class KDAConfig:
 
 
 @dataclass
+class MLAConfig:
+    """Configuration for Kimi K3-style gated Multi-Latent Attention."""
+
+    num_heads: List = field(default_factory=list)
+    q_lora_rank: Any = None
+    kv_lora_rank: Union[int, List] = 512
+    qk_nope_head_dim: Union[int, List] = 128
+    qk_rope_head_dim: Union[int, List] = 0
+    v_head_dim: Union[int, List] = 128
+    use_output_gate: bool = True
+
+
+@dataclass
 class HNetConfig:
     arch_layout: List[Union[str, List]] = field(default_factory=list)
     d_model: List[int] = field(default_factory=list)
@@ -39,6 +52,7 @@ class HNetConfig:
     ssm_cfg: SSMConfig = field(default_factory=SSMConfig)
     attn_cfg: AttnConfig = field(default_factory=AttnConfig)
     kda_cfg: KDAConfig = field(default_factory=KDAConfig)
+    mla_cfg: MLAConfig = field(default_factory=MLAConfig)
     tie_embeddings: bool = False
 
     def to_dict(self):

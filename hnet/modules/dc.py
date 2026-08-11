@@ -121,6 +121,11 @@ class RoutingModule(nn.Module):
             )
             boundary_prob = boundary_prob.masked_fill(continuation_mask, 0.0)
 
+        if cu_seqlens is None:
+            # Every padded sequence must retain its first chunk boundary even
+            # when a fixed-length shard begins on a UTF-8 continuation byte.
+            boundary_prob[..., 0] = PAD_PROB
+
         if cu_seqlens is not None:
             boundary_prob = boundary_prob.squeeze(0)
             boundary_prob[cu_seqlens[:-1]] = PAD_PROB
@@ -193,6 +198,9 @@ class RoutingModule(nn.Module):
             continuation_mask = continuation_mask.to(
                 device=boundary_prob.device, dtype=torch.bool
             ).view_as(boundary_prob)
+            continuation_mask = (
+                continuation_mask & inference_params.has_seen_tokens
+            )
             boundary_prob = boundary_prob.masked_fill(continuation_mask, 0.0)
         boundary_prob = torch.stack(((1 - boundary_prob), boundary_prob), dim=-1)
 

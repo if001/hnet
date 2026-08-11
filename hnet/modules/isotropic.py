@@ -149,6 +149,7 @@ class Isotropic(nn.Module):
 
         attn_mixer_kwargs = copy.deepcopy(mixer_kwargs)
         ssm_mixer_kwargs = copy.deepcopy(mixer_kwargs)
+        kda_mixer_kwargs = copy.deepcopy(mixer_kwargs)
         if mask is not None:
             packed = False
             assert (
@@ -161,6 +162,7 @@ class Isotropic(nn.Module):
             ssm_mixer_kwargs.update(
                 {"seq_idx": get_seq_idx(cu_seqlens, device=hidden_states.device)}
             )
+            kda_mixer_kwargs["cu_seqlens"] = cu_seqlens.int()
             packed = True
 
         residual = None
@@ -176,7 +178,7 @@ class Isotropic(nn.Module):
                     hidden_states = hidden_states.squeeze(0)
                     residual = None if residual is None else residual.squeeze(0)
             elif arch in ("k", "K"):
-                layer_mixer_kwargs = ssm_mixer_kwargs
+                layer_mixer_kwargs = kda_mixer_kwargs
                 if mask is not None:
                     layer_mixer_kwargs = copy.deepcopy(layer_mixer_kwargs)
                     layer_mixer_kwargs["attention_mask"] = mask

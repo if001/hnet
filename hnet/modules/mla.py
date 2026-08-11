@@ -15,7 +15,9 @@ class LatentRMSNorm(nn.Module):
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         x_float = x.float()
-        x_float *= torch.rsqrt(x_float.square().mean(-1, keepdim=True) + self.eps)
+        x_float = x_float * torch.rsqrt(
+            x_float.square().mean(-1, keepdim=True) + self.eps
+        )
         return x_float.to(x.dtype) * self.weight
 
 

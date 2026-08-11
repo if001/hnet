@@ -39,6 +39,7 @@ def create_block(
     ssm_cfg=dict(),
     attn_cfg=dict(),
     kda_cfg=dict(),
+    mla_cfg=dict(),
     norm_epsilon=1e-5,
     layer_idx=None,
     residual_in_fp32=True,
@@ -59,6 +60,12 @@ def create_block(
         mixer_cls = partial(
             KimiDeltaAttention, **kda_cfg, **factory_kwargs, layer_idx=layer_idx
         )
+    elif arch in ("g", "G"):
+        from .mla import GatedMLA
+
+        mixer_cls = partial(
+            GatedMLA, **mla_cfg, **factory_kwargs, layer_idx=layer_idx
+        )
     elif arch in ("m", "M"):
         mixer_cls = partial(
             Mamba2Wrapper, **ssm_cfg, **factory_kwargs, layer_idx=layer_idx
@@ -67,13 +74,13 @@ def create_block(
         raise NotImplementedError
 
     # MLP
-    if arch in ("T", "M", "K"):
+    if arch in ("T", "M", "K", "G"):
         mlp_cls = partial(
             SwiGLU,
             d_intermediate=d_intermediate,
             **factory_kwargs,
         )
-    elif arch in ("t", "m", "k"):
+    elif arch in ("t", "m", "k", "g"):
         mlp_cls = nn.Identity
     else:
         raise NotImplementedError

@@ -80,7 +80,12 @@ def load_from_pretrained(
     return model
 
 
-def prefill(model, input_ids: torch.Tensor, max_tokens: int):
+def prefill(
+    model,
+    input_ids: torch.Tensor,
+    max_tokens: int,
+    utf8_hard: bool = False,
+):
     """Prefill the generation cache, with a safe fallback for Mamba2 layouts."""
     inference_dtype = next(model.parameters()).dtype
     inference_cache = model.allocate_inference_cache(
@@ -89,8 +94,13 @@ def prefill(model, input_ids: torch.Tensor, max_tokens: int):
     mask = torch.ones(input_ids.shape, device=input_ids.device, dtype=torch.bool)
     try:
         with torch.inference_mode():
+            continuation_mask = (input_ids >= 0x80) & (input_ids <= 0xBF)
             output = model.forward(
-                input_ids, mask=mask, inference_params=inference_cache
+                input_ids,
+                mask=mask,
+                inference_params=inference_cache,
+                continuation_mask=continuation_mask if utf8_hard else None,
+                continuation_hard=utf8_hard,
             )
         return output, inference_cache
     except RuntimeError as exc:
@@ -104,7 +114,11 @@ def prefill(model, input_ids: torch.Tensor, max_tokens: int):
     )
     with torch.inference_mode():
         for index in range(input_ids.shape[1]):
-            output = model.step(input_ids[:, index : index + 1], inference_cache)
+            output = model.step(
+                input_ids[:, index : index + 1],
+                inference_cache,
+                continuation_hard=utf8_hard,
+            )
     return output, inference_cache
 
 
@@ -114,6 +128,7 @@ def generate(
     max_tokens: int = 1024,
     temperature: float = 1.0,
     top_p: float = 0.9,
+    utf8_hard: bool = False,
 ):
     """Generate text from the model, yielding tokens as they are generated.
 
@@ -134,7 +149,9 @@ def generate(
         encoded["input_ids"], dtype=torch.long, device=device
     ).unsqueeze(0)
 
-    output, inference_cache = prefill(model, input_ids, max_tokens)
+    output, inference_cache = prefill(
+        model, input_ids, max_tokens, utf8_hard=utf8_hard
+    )
 
     is_greedy = temperature <= 0.0
     logits = output.logits[0, -1, :]
@@ -169,7 +186,9 @@ def generate(
         yield int(next_token.item())
 
         with torch.inference_mode():
-            output = model.step(current_token, inference_cache)
+            output = model.step(
+                current_token, inference_cache, continuation_hard=utf8_hard
+            )
 
         logits = output.logits[0, -1, :]
         if not is_greedy:
@@ -177,7 +196,12 @@ def generate(
 
 
 def stream_generate_and_print(
-    model, prompt: str, max_tokens: int, temperature: float, top_p: float
+    model,
+    prompt: str,
+    max_tokens: int,
+    temperature: float,
+    top_p: float,
+    utf8_hard: bool = False,
 ) -> None:
     print(f"\033[92m{prompt}\033[0m", end="")
     decoder = codecs.getincrementaldecoder("utf-8")(errors="replace")
@@ -188,6 +212,7 @@ def stream_generate_and_print(
         max_tokens=max_tokens,
         temperature=temperature,
         top_p=top_p,
+        utf8_hard=utf8_hard,
     ):
         chunk = decoder.decode(bytes([token_id]), final=False)
         if chunk:
@@ -243,6 +268,11 @@ def main():
         choices=["auto", "bf16", "fp16", "fp32"],
         help="Inference dtype (default: auto)",
     )
+    parser.add_argument(
+        "--utf8-hard",
+        action="store_true",
+        help="Disallow stage-0 boundaries on UTF-8 continuation bytes.",
+    )
     args = parser.parse_args()
 
     print("Loading model...")
@@ -271,6 +301,7 @@ def main():
                 max_tokens=args.max_tokens,
                 temperature=args.temperature,
                 top_p=args.top_p,
+                utf8_hard=args.utf8_hard,
             )
             print()
         return
@@ -291,6 +322,7 @@ def main():
             max_tokens=args.max_tokens,
             temperature=args.temperature,
             top_p=args.top_p,
+            utf8_hard=args.utf8_hard,
         )
 
 

@@ -68,6 +68,7 @@ def inspect_prompt_chunks(
     model: Any,
     prompt: str,
     add_bos: bool = True,
+    utf8_hard: bool = False,
 ) -> dict[str, Any]:
     tokenizer = ByteTokenizer()
     prompt_utf8_bytes = list(prompt.encode("utf-8"))
@@ -78,7 +79,13 @@ def inspect_prompt_chunks(
     input_ids = torch.tensor(token_ids, dtype=torch.long, device=device).unsqueeze(0)
     mask = torch.ones(input_ids.shape, device=device, dtype=torch.bool)
 
-    output = model(input_ids=input_ids, mask=mask)
+    continuation_mask = (input_ids >= 0x80) & (input_ids <= 0xBF)
+    output = model(
+        input_ids=input_ids,
+        mask=mask,
+        continuation_mask=continuation_mask if utf8_hard else None,
+        continuation_hard=utf8_hard,
+    )
     if len(output.bpred_output) < 2:
         raise ValueError(
             "This utility expects a 2-stage model, but boundary outputs are fewer than 2."
@@ -127,4 +134,3 @@ def inspect_prompt_chunks(
         "stage1_boundary_positions_in_input": stage1_boundary_positions_in_input,
         "stage1_chunks": stage1_chunks,
     }
-

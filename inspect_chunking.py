@@ -58,9 +58,12 @@ def inspect_prompt(
     add_bos: bool,
     detail: bool,
     index_label: str,
+    utf8_hard: bool,
 ) -> None:
     with torch.inference_mode():
-        info = inspect_prompt_chunks(model, prompt, add_bos=add_bos)
+        info = inspect_prompt_chunks(
+            model, prompt, add_bos=add_bos, utf8_hard=utf8_hard
+        )
 
     token_ids = info["token_ids"]
     stage0_chunks = info["stage0_chunks"]
@@ -140,6 +143,11 @@ def main() -> None:
         action="store_true",
         help="Show detailed chunk diagnostics in addition to compact output",
     )
+    parser.add_argument(
+        "--utf8-hard",
+        action="store_true",
+        help="Disallow stage-0 boundaries on UTF-8 continuation bytes.",
+    )
     args = parser.parse_args()
 
     print("Loading model...")
@@ -163,6 +171,7 @@ def main() -> None:
                 add_bos=add_bos,
                 detail=args.detail,
                 index_label=f"[{idx}/{len(valid_prompts)}]",
+                utf8_hard=args.utf8_hard,
             )
         return
 
@@ -178,6 +187,7 @@ def main() -> None:
             add_bos=add_bos,
             detail=args.detail,
             index_label=f"[{prompt_count}/?]",
+            utf8_hard=args.utf8_hard,
         )
 
 

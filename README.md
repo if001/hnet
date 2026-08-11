@@ -166,8 +166,10 @@ chunkingとmainの層で異なるlrを使うために、lr-multiplierを設定�
 ```
 
 ### UTF-8 byte boundary constraint
-stage0 の chunk 境界が UTF-8 continuation byte (`0x80..0xBF`) の途中に立ちづらくする soft constraint を有効化できます。
-hard mask ではなく、boundary を取りづらくする prior と補助損失です。
+stage0 の chunk 境界が UTF-8 continuation byte (`0x80..0xBF`) の途中に
+立たないようにする hard constraint、または立ちづらくする soft constraintを
+有効化できます。hard constraint は continuation byte を境界候補から除外し、
+soft constraint は boundary を取りづらくする prior と補助損失を使います。
 
 ```sh
 python train.py \
@@ -182,7 +184,9 @@ python train.py \
 ```
 
 主な引数:
-- --byte-boundary-constraint utf8-softで制約を有効化
+- `--byte-boundary-constraint utf8-hard` でstage0のhard constraintを有効化
+
+- `--byte-boundary-constraint utf8-soft` でsoft constraintを有効化
 
 - --byte-boundary-constraint-bias
   stage0 の forward 時に、continuation byte 上の boundary 確率を直接下げます。

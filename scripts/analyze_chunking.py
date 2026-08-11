@@ -23,14 +23,21 @@ def load_eval_set(path: Path) -> tuple[list[str], list[str]]:
     return prompts, targets
 
 
-def analyze(model: Any, prompts: list[str], targets: list[str]) -> dict[str, Any]:
+def analyze(
+    model: Any,
+    prompts: list[str],
+    targets: list[str],
+    utf8_hard: bool = False,
+) -> dict[str, Any]:
     stage_chunks: list[list[list[int]]] = [[], []]
     midpoint_rates: list[list[float]] = [[], []]
     target_patterns: dict[str, list[dict[str, Any]]] = {target: [] for target in targets}
     prompt_results: list[dict[str, Any]] = []
 
     for prompt in prompts:
-        info = inspect_prompt_chunks(model, prompt, add_bos=True)
+        info = inspect_prompt_chunks(
+            model, prompt, add_bos=True, utf8_hard=utf8_hard
+        )
         stage_positions = [
             info["stage0_boundaries"],
             info["stage1_boundary_positions_in_input"],
@@ -83,14 +90,20 @@ def main() -> None:
     parser.add_argument("--config-path", required=True)
     parser.add_argument("--eval-set", type=Path, required=True)
     parser.add_argument("--output", type=Path, required=True)
+    parser.add_argument(
+        "--utf8-hard",
+        action="store_true",
+        help="Disallow stage-0 boundaries on UTF-8 continuation bytes.",
+    )
     args = parser.parse_args()
 
     prompts, targets = load_eval_set(args.eval_set)
     model = load_from_pretrained(args.model_path, args.config_path)
-    result = analyze(model, prompts, targets)
+    result = analyze(model, prompts, targets, utf8_hard=args.utf8_hard)
     result["model_path"] = args.model_path
     result["config_path"] = args.config_path
     result["eval_set"] = str(args.eval_set)
+    result["utf8_hard"] = args.utf8_hard
     args.output.parent.mkdir(parents=True, exist_ok=True)
     args.output.write_text(
         json.dumps(result, ensure_ascii=False, indent=2, allow_nan=True) + "\n",

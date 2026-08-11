@@ -94,9 +94,13 @@ def parse_args() -> TrainingConfig:
     parser.add_argument(
         "--byte-boundary-constraint",
         type=str,
-        choices=["off", "utf8-soft"],
+        choices=["off", "utf8-soft", "utf8-hard"],
         default="off",
-        help="Optional soft prior against chunk boundaries on UTF-8 continuation bytes.",
+        help=(
+            "Optional constraint against chunk boundaries on UTF-8 continuation "
+            "bytes. utf8-soft adds a prior and auxiliary loss; utf8-hard removes "
+            "continuation bytes from stage-0 boundary candidates."
+        ),
     )
     parser.add_argument(
         "--byte-boundary-constraint-weight",

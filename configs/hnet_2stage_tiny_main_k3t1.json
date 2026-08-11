@@ -1,0 +1,63 @@
+{
+    "arch_layout": [
+        "m1",
+        [
+            "T1",
+            [
+                "K3T1"
+            ],
+            "T1"
+        ],
+        "m1"
+    ],
+    "d_model": [
+        32,
+        32,
+        64
+    ],
+    "d_intermediate": [
+        0,
+        64,
+        128
+    ],
+    "vocab_size": 256,
+    "ssm_cfg": {
+        "chunk_size": 64,
+        "d_conv": 4,
+        "d_state": 16,
+        "expand": 2
+    },
+    "attn_cfg": {
+        "num_heads": [
+            4,
+            4,
+            4
+        ],
+        "rotary_emb_dim": [
+            8,
+            8,
+            16
+        ],
+        "window_size": [
+            63,
+            63,
+            -1
+        ]
+    },
+    "kda_cfg": {
+        "num_heads": [
+            4,
+            4,
+            4
+        ],
+        "head_dim": [
+            8,
+            8,
+            16
+        ],
+        "short_conv_kernel_size": 4,
+        "use_full_rank_gate": true,
+        "gate_lower_bound": -5.0
+    },
+    "tie_embeddings": false
+}

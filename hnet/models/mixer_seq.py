@@ -109,7 +109,7 @@ class HNetForCausalLM(nn.Module, GenerationMixin):
             ), "Inference params are not supported in packed mode"
             hidden_states = hidden_states.flatten(0, 1)
             cu_seqlens = torch.arange(B + 1, device=hidden_states.device) * L
-            max_seqlen = torch.tensor(L, dtype=torch.int, device=hidden_states.device)
+            max_seqlen = L
         else:
             cu_seqlens = None
             max_seqlen = None

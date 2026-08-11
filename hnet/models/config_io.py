@@ -2,7 +2,7 @@ import json
 from dataclasses import asdict
 from pathlib import Path
 
-from .config_hnet import AttnConfig, HNetConfig, SSMConfig
+from .config_hnet import AttnConfig, HNetConfig, KDAConfig, SSMConfig
 
 
 def load_hnet_config(config_path: str | Path) -> HNetConfig:
@@ -11,7 +11,10 @@ def load_hnet_config(config_path: str | Path) -> HNetConfig:
 
     attn_cfg = AttnConfig(**config.pop("attn_cfg"))
     ssm_cfg = SSMConfig(**config.pop("ssm_cfg"))
-    return HNetConfig(**config, attn_cfg=attn_cfg, ssm_cfg=ssm_cfg)
+    kda_cfg = KDAConfig(**config.pop("kda_cfg", {}))
+    return HNetConfig(
+        **config, attn_cfg=attn_cfg, ssm_cfg=ssm_cfg, kda_cfg=kda_cfg
+    )
 
 
 def save_hnet_config(config: HNetConfig, config_path: str | Path) -> Path:

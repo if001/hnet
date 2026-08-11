@@ -80,6 +80,34 @@ def load_from_pretrained(
     return model
 
 
+def prefill(model, input_ids: torch.Tensor, max_tokens: int):
+    """Prefill the generation cache, with a safe fallback for Mamba2 layouts."""
+    inference_dtype = next(model.parameters()).dtype
+    inference_cache = model.allocate_inference_cache(
+        1, input_ids.shape[1] + max_tokens, dtype=inference_dtype
+    )
+    mask = torch.ones(input_ids.shape, device=input_ids.device, dtype=torch.bool)
+    try:
+        with torch.inference_mode():
+            output = model.forward(
+                input_ids, mask=mask, inference_params=inference_cache
+            )
+        return output, inference_cache
+    except RuntimeError as exc:
+        if "causal_conv1d with channel last layout requires strides" not in str(exc):
+            raise
+
+    # Some causal-conv builds reject the strided Mamba2 full-prefill view. Start
+    # again with a fresh cache and use the already-supported recurrent path.
+    inference_cache = model.allocate_inference_cache(
+        1, input_ids.shape[1] + max_tokens, dtype=inference_dtype
+    )
+    with torch.inference_mode():
+        for index in range(input_ids.shape[1]):
+            output = model.step(input_ids[:, index : index + 1], inference_cache)
+    return output, inference_cache
+
+
 def generate(
     model,
     prompt: str,
@@ -100,20 +128,13 @@ def generate(
         Generated token ids (byte values) one by one
     """
     device = next(model.parameters()).device
-    inference_dtype = next(model.parameters()).dtype
     tokenizer = ByteTokenizer()
     encoded = tokenizer.encode([prompt], add_bos=True)[0]
     input_ids = torch.tensor(
         encoded["input_ids"], dtype=torch.long, device=device
     ).unsqueeze(0)
 
-    inference_cache = model.allocate_inference_cache(
-        1, input_ids.shape[1] + max_tokens, dtype=inference_dtype
-    )
-
-    with torch.inference_mode():
-        mask = torch.ones(input_ids.shape, device=device, dtype=torch.bool)
-        output = model.forward(input_ids, mask=mask, inference_params=inference_cache)
+    output, inference_cache = prefill(model, input_ids, max_tokens)
 
     is_greedy = temperature <= 0.0
     logits = output.logits[0, -1, :]

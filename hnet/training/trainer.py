@@ -676,6 +676,10 @@ def evaluate_validation(
 
             if stage_idx == 0:
                 cont_valid = continuation_mask & valid_mask
+                sequence_starts = valid_mask & (
+                    valid_mask.long().cumsum(dim=-1) == 1
+                )
+                cont_valid = cont_valid & ~sequence_starts
                 cont_denom = cont_valid.float().sum().clamp(min=1.0)
                 mid_utf8_boundary_fraction = float(
                     (

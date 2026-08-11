@@ -249,7 +249,7 @@ python train.py \
 小さいほど強圧縮を表す
 
 - target_gap_s0, target_gap_s1 は target ratio との差で、これまでの整理では正なら under-compress（保持しすぎ）、負なら over-compress（削りすぎ）と解釈
-- stage0_mid_utf8_boundary_fraction は stage0 で continuation byte 上に boundary が立った割合で、小さいほど自然な UTF-8 境界に寄る
+- stage0_mid_utf8_boundary_fraction は stage0 で continuation byte 上に boundary が立った割合で、小さいほど自然な UTF-8 境界に寄る。固定長 shard の先頭に必要な boundary は集計から除外する
 
 ## Inference
 学習済み checkpoint と保存された `model_config.json` を指定します。

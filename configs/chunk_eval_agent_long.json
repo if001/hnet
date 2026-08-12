@@ -1,0 +1,14 @@
+{
+    "prompts": [
+        "ユーザー: 東京出張の準備を手伝ってください。まず天気を調べ、その結果に応じて持ち物を提案してください。\nアシスタント: 天気を確認します。\n{\"tool\":\"search\",\"query\":\"東京 週間天気\"}\nツール: {\"status\":\"ok\",\"result\":{\"temperature_c\":[18,21],\"rain_probability\":60}}\nアシスタント: 降水確率が高いため、折り畳み傘と防水性のある靴を用意してください。朝晩は冷えるので薄手の上着もあると安心です。次に新幹線の候補を調べます。\n{\"tool\":\"search\",\"query\":\"東京 新幹線 予約\"}",
+        "システム: あなたはリポジトリ内の変更を確認する開発アシスタントです。\nユーザー: /content/drive/MyDrive/hnet_agent_kda/runs/r4_k1t1/checkpoint_step_000220.pt を使う評価コードを説明してください。\nアシスタント: checkpointを読み込み、同じvalidation batchに対してsoft constraintとhard constraintを比較します。\n```python\ncheckpoint = load_checkpoint_file(path, device)\nmodel.load_state_dict(extract_model_state_dict(checkpoint), strict=True)\nfor mode in (\"utf8-soft\", \"utf8-hard\"):\n    config = replace(base_config, byte_boundary_constraint=mode)\n    metrics[mode] = evaluate_validation(model, config, device, dtype, batches)\n```\n比較時はvalidation CE、BPB、L1/L0、L2/L1、L2/L0、UTF-8途中境界率を保存します。異なるbatchを使うとarchitecture以外の差が混ざるため、cached batchesを共有します。",
+        "依頼: 検索結果を要約してMarkdownで返してください。\n手順1: search_documents(query)を呼び出す。\n手順2: 文書IDと更新日時を確認する。\n手順3: 根拠のある項目だけを箇条書きにする。\n入力: {\"query\":\"動的チャンク KDA Gated MLA\",\"limit\":5,\"filters\":{\"language\":[\"ja\",\"en\"],\"include_code\":true}}\n結果: [{\"id\":\"doc-001\",\"title\":\"Dynamic chunking notes\",\"path\":\"/workspace/docs/chunking.md\"},{\"id\":\"doc-002\",\"title\":\"Attention comparison\",\"path\":\"/workspace/results/attention.json\"}]\n回答ではBPBだけでなく実効圧縮率、chunk length distribution、throughput、peak GPU memoryを併記し、UTF-8 continuation byteの途中に境界がないことも確認してください。"
+    ],
+    "targets": [
+        "search",
+        "query",
+        "checkpoint",
+        "utf8-hard",
+        "search_documents"
+    ]
+}

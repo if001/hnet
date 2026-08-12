@@ -89,6 +89,7 @@ class HNetForCausalLM(nn.Module, GenerationMixin):
         num_last_tokens=0,
         continuation_mask=None,
         continuation_bias: float = 0.0,
+        continuation_hard: bool = False,
         **mixer_kwargs,
     ):
         """
@@ -122,6 +123,7 @@ class HNetForCausalLM(nn.Module, GenerationMixin):
             inference_params=inference_params,
             continuation_mask=continuation_mask,
             continuation_bias=continuation_bias,
+            continuation_hard=continuation_hard,
             **mixer_kwargs,
         )
 
@@ -140,7 +142,7 @@ class HNetForCausalLM(nn.Module, GenerationMixin):
             inference_params=inference_params,
         )
 
-    def step(self, input_ids, inference_params):
+    def step(self, input_ids, inference_params, continuation_hard: bool = False):
         B = input_ids.shape[0]
         assert (
             B == 1
@@ -148,8 +150,12 @@ class HNetForCausalLM(nn.Module, GenerationMixin):
 
         hidden_states = self.embeddings(input_ids)
 
+        continuation_mask = (input_ids >= 0x80) & (input_ids <= 0xBF)
         hidden_states, bpred_output = self.backbone.step(
-            hidden_states, inference_params
+            hidden_states,
+            inference_params,
+            continuation_mask=continuation_mask if continuation_hard else None,
+            continuation_hard=continuation_hard,
         )
         logits = self.lm_head(hidden_states)
 

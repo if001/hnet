@@ -553,6 +553,7 @@ def save_validation_chunk_reports(
     prompts: list[str],
     output_dir: Path,
     step: int,
+    utf8_hard: bool = False,
 ) -> Path | None:
     valid_prompts = [prompt for prompt in prompts if prompt and prompt.strip()]
     if not valid_prompts:
@@ -560,7 +561,12 @@ def save_validation_chunk_reports(
 
     lines: list[str] = []
     for index, prompt in enumerate(valid_prompts, start=1):
-        info = inspect_prompt_chunks(model, prompt, add_bos=True)
+        info = inspect_prompt_chunks(
+            model,
+            prompt,
+            add_bos=True,
+            utf8_hard=utf8_hard,
+        )
         lines.append(f"[{index}/{len(valid_prompts)}]")
         lines.append(f"Input prompt: {prompt}")
         lines.append(f"stage0: {format_stage_compact(info['stage0_chunks'])}")
@@ -618,6 +624,8 @@ def evaluate_validation(
                 continuation_bias=training_config.byte_boundary_constraint_bias
                 if training_config.byte_boundary_constraint == "utf8-soft"
                 else 0.0,
+                continuation_hard=training_config.byte_boundary_constraint
+                == "utf8-hard",
             )
             ce_loss = F.cross_entropy(
                 output.logits.reshape(-1, output.logits.shape[-1]),
@@ -668,6 +676,10 @@ def evaluate_validation(
 
             if stage_idx == 0:
                 cont_valid = continuation_mask & valid_mask
+                sequence_starts = valid_mask & (
+                    valid_mask.long().cumsum(dim=-1) == 1
+                )
+                cont_valid = cont_valid & ~sequence_starts
                 cont_denom = cont_valid.float().sum().clamp(min=1.0)
                 mid_utf8_boundary_fraction = float(
                     (
@@ -1127,6 +1139,8 @@ def train(training_config: TrainingConfig) -> None:
                     mask=mask,
                     continuation_mask=continuation_mask,
                     continuation_bias=continuation_bias,
+                    continuation_hard=training_config.byte_boundary_constraint
+                    == "utf8-hard",
                 )
                 ce_loss = F.cross_entropy(
                     output.logits.reshape(-1, output.logits.shape[-1]),
@@ -1354,6 +1368,7 @@ def train(training_config: TrainingConfig) -> None:
                 prompts=training_config.chunk_prompts,
                 output_dir=output_dir,
                 step=completed_steps,
+                utf8_hard=training_config.byte_boundary_constraint == "utf8-hard",
             )
             if device.type == "cuda":
                 logger.info(

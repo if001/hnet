@@ -1,0 +1,14 @@
+{
+    "arch_layout": ["G1"],
+    "d_model": [64],
+    "d_intermediate": [128],
+    "vocab_size": 256,
+    "ssm_cfg": {"chunk_size": 64, "d_conv": 4, "d_state": 16, "expand": 2},
+    "attn_cfg": {"num_heads": [4], "rotary_emb_dim": [16], "window_size": [-1]},
+    "mla_cfg": {
+        "num_heads": [4], "q_lora_rank": [32], "kv_lora_rank": [16],
+        "qk_nope_head_dim": [12], "qk_rope_head_dim": [4],
+        "v_head_dim": [12], "use_output_gate": true
+    },
+    "tie_embeddings": false
+}

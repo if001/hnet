@@ -166,8 +166,10 @@ chunkingとmainの層で異なるlrを使うために、lr-multiplierを設定�
 ```
 
 ### UTF-8 byte boundary constraint
-stage0 の chunk 境界が UTF-8 continuation byte (`0x80..0xBF`) の途中に立ちづらくする soft constraint を有効化できます。
-hard mask ではなく、boundary を取りづらくする prior と補助損失です。
+stage0 の chunk 境界が UTF-8 continuation byte (`0x80..0xBF`) の途中に
+立たないようにする hard constraint、または立ちづらくする soft constraintを
+有効化できます。hard constraint は continuation byte を境界候補から除外し、
+soft constraint は boundary を取りづらくする prior と補助損失を使います。
 
 ```sh
 python train.py \
@@ -182,7 +184,9 @@ python train.py \
 ```
 
 主な引数:
-- --byte-boundary-constraint utf8-softで制約を有効化
+- `--byte-boundary-constraint utf8-hard` でstage0のhard constraintを有効化
+
+- `--byte-boundary-constraint utf8-soft` でsoft constraintを有効化
 
 - --byte-boundary-constraint-bias
   stage0 の forward 時に、continuation byte 上の boundary 確率を直接下げます。
@@ -245,7 +249,7 @@ python train.py \
 小さいほど強圧縮を表す
 
 - target_gap_s0, target_gap_s1 は target ratio との差で、これまでの整理では正なら under-compress（保持しすぎ）、負なら over-compress（削りすぎ）と解釈
-- stage0_mid_utf8_boundary_fraction は stage0 で continuation byte 上に boundary が立った割合で、小さいほど自然な UTF-8 境界に寄る
+- stage0_mid_utf8_boundary_fraction は stage0 で continuation byte 上に boundary が立った割合で、小さいほど自然な UTF-8 境界に寄る。固定長 shard の先頭に必要な boundary は集計から除外する
 
 ## Inference
 学習済み checkpoint と保存された `model_config.json` を指定します。

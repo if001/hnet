@@ -75,6 +75,7 @@ class RoutingModule(nn.Module):
         inference_params=None,
         continuation_mask=None,
         continuation_bias: float = 0.0,
+        continuation_hard: bool = False,
     ):
         assert (mask is not None) or (
             cu_seqlens is not None
@@ -113,6 +114,17 @@ class RoutingModule(nn.Module):
                 min=0.0,
                 max=1.0,
             )
+
+        if continuation_mask is not None and continuation_hard:
+            continuation_mask = continuation_mask.to(
+                device=boundary_prob.device, dtype=torch.bool
+            )
+            boundary_prob = boundary_prob.masked_fill(continuation_mask, 0.0)
+
+        if cu_seqlens is None:
+            # Every padded sequence must retain its first chunk boundary even
+            # when a fixed-length shard begins on a UTF-8 continuation byte.
+            boundary_prob[..., 0] = PAD_PROB
 
         if cu_seqlens is not None:
             boundary_prob = boundary_prob.squeeze(0)
@@ -161,7 +173,13 @@ class RoutingModule(nn.Module):
             valid_mask=valid_mask,  # (shape hidden_states.shape[:-1])
         )
 
-    def step(self, hidden_states, inference_params):
+    def step(
+        self,
+        hidden_states,
+        inference_params,
+        continuation_mask=None,
+        continuation_hard: bool = False,
+    ):
         # hidden_states is (B, 1, D)
         hidden_states = hidden_states.squeeze(1)
         cos_sim = torch.einsum(
@@ -176,6 +194,14 @@ class RoutingModule(nn.Module):
             boundary_prob,
             torch.ones_like(boundary_prob),
         )
+        if continuation_mask is not None and continuation_hard:
+            continuation_mask = continuation_mask.to(
+                device=boundary_prob.device, dtype=torch.bool
+            ).view_as(boundary_prob)
+            continuation_mask = (
+                continuation_mask & inference_params.has_seen_tokens
+            )
+            boundary_prob = boundary_prob.masked_fill(continuation_mask, 0.0)
         boundary_prob = torch.stack(((1 - boundary_prob), boundary_prob), dim=-1)
 
         inference_params.has_seen_tokens.copy_(

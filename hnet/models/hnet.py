@@ -210,6 +210,7 @@ class HNet(nn.Module):
         inference_params=None,
         continuation_mask=None,
         continuation_bias: float = 0.0,
+        continuation_hard: bool = False,
         **mixer_kwargs,
     ):
         assert mask is not None or (
@@ -264,6 +265,7 @@ class HNet(nn.Module):
             inference_params=inference_params.routing_module_state,
             continuation_mask=continuation_mask if self.stage_idx == 0 else None,
             continuation_bias=continuation_bias if self.stage_idx == 0 else 0.0,
+            continuation_hard=continuation_hard if self.stage_idx == 0 else False,
         )
         hidden_states, next_cu_seqlens, next_max_seqlen, next_mask = self.chunk_layer(
             hidden_states, bpred_output.boundary_mask, cu_seqlens, mask=mask
@@ -277,6 +279,7 @@ class HNet(nn.Module):
             inference_params=inference_params.main_network_state,
             continuation_mask=None,
             continuation_bias=0.0,
+            continuation_hard=False,
             **mixer_kwargs,
         )
 
@@ -305,7 +308,13 @@ class HNet(nn.Module):
         hidden_states = hidden_states[..., :D]
         return hidden_states, [bpred_output, *prev_boundary_predictions]
 
-    def step(self, hidden_states, inference_params):
+    def step(
+        self,
+        hidden_states,
+        inference_params,
+        continuation_mask=None,
+        continuation_hard: bool = False,
+    ):
         D = hidden_states.shape[-1]
 
         if self.pad_dimension is not None:
@@ -331,7 +340,10 @@ class HNet(nn.Module):
         residual = self.residual_proj(hidden_states_for_residual)
 
         bpred_output = self.routing_module.step(
-            hidden_states, inference_params.routing_module_state
+            hidden_states,
+            inference_params.routing_module_state,
+            continuation_mask=continuation_mask if self.stage_idx == 0 else None,
+            continuation_hard=continuation_hard if self.stage_idx == 0 else False,
         )
         hidden_states_inner = self.chunk_layer.step(
             hidden_states, bpred_output.boundary_mask

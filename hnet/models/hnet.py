@@ -6,11 +6,13 @@ import torch.nn as nn
 
 from hnet.modules.isotropic import Isotropic, IsotropicInferenceParams
 from hnet.modules.dc import (
+    BoundaryOverride,
     RoutingModule,
     ChunkLayer,
     DeChunkLayer,
     RoutingModuleState,
     DeChunkState,
+    apply_boundary_override,
 )
 from hnet.modules.utils import apply_optimization_params
 
@@ -211,6 +213,7 @@ class HNet(nn.Module):
         continuation_mask=None,
         continuation_bias: float = 0.0,
         continuation_hard: bool = False,
+        boundary_overrides: list[BoundaryOverride] | None = None,
         **mixer_kwargs,
     ):
         assert mask is not None or (
@@ -267,6 +270,17 @@ class HNet(nn.Module):
             continuation_bias=continuation_bias if self.stage_idx == 0 else 0.0,
             continuation_hard=continuation_hard if self.stage_idx == 0 else False,
         )
+        if boundary_overrides is not None and self.stage_idx < len(boundary_overrides):
+            required_start_mask = torch.zeros_like(bpred_output.boundary_mask)
+            if cu_seqlens is None:
+                required_start_mask[:, 0] = True
+            else:
+                required_start_mask[cu_seqlens[:-1]] = True
+            bpred_output = apply_boundary_override(
+                bpred_output,
+                boundary_overrides[self.stage_idx],
+                required_start_mask=required_start_mask,
+            )
         hidden_states, next_cu_seqlens, next_max_seqlen, next_mask = self.chunk_layer(
             hidden_states, bpred_output.boundary_mask, cu_seqlens, mask=mask
         )
@@ -280,6 +294,7 @@ class HNet(nn.Module):
             continuation_mask=None,
             continuation_bias=0.0,
             continuation_hard=False,
+            boundary_overrides=boundary_overrides,
             **mixer_kwargs,
         )
 

@@ -19,6 +19,78 @@ class RoutingModuleOutput:
     valid_mask: torch.Tensor
 
 
+@dataclass(frozen=True)
+class BoundaryOverride:
+    """Counterfactual routing decision for one hierarchy stage.
+
+    ``boundary_prob`` is optional so callers can replace only the hard routing
+    decision. Evaluation code should normally provide probabilities as well to
+    preserve the learned boundary-confidence sequence at the moved positions.
+    """
+
+    boundary_mask: torch.Tensor
+    boundary_prob: torch.Tensor | None = None
+
+
+def apply_boundary_override(
+    output: RoutingModuleOutput,
+    override: BoundaryOverride,
+    required_start_mask: torch.Tensor | None = None,
+) -> RoutingModuleOutput:
+    """Return routing output with an externally supplied boundary decision."""
+
+    boundary_mask = override.boundary_mask.to(
+        device=output.boundary_mask.device, dtype=torch.bool
+    )
+    if boundary_mask.shape != output.boundary_mask.shape:
+        raise ValueError(
+            "Boundary override shape does not match router output: "
+            f"{tuple(boundary_mask.shape)} != {tuple(output.boundary_mask.shape)}"
+        )
+    if torch.any(boundary_mask & ~output.valid_mask):
+        raise ValueError("Boundary override selects padded or otherwise invalid tokens")
+    if required_start_mask is not None:
+        required_start_mask = required_start_mask.to(
+            device=boundary_mask.device, dtype=torch.bool
+        )
+        if required_start_mask.shape != boundary_mask.shape:
+            raise ValueError("Required-start mask shape does not match router output")
+        if torch.any(required_start_mask & ~boundary_mask):
+            raise ValueError("Boundary override must preserve every sequence start")
+
+    boundary_prob = output.boundary_prob
+    if override.boundary_prob is not None:
+        boundary_prob = override.boundary_prob.to(
+            device=output.boundary_prob.device, dtype=output.boundary_prob.dtype
+        )
+        if boundary_prob.shape != output.boundary_prob.shape:
+            raise ValueError(
+                "Boundary probability override shape does not match router output: "
+                f"{tuple(boundary_prob.shape)} != "
+                f"{tuple(output.boundary_prob.shape)}"
+            )
+        if torch.any((boundary_prob < 0.0) | (boundary_prob > 1.0)):
+            raise ValueError("Boundary probability override must be in [0, 1]")
+        if not torch.allclose(
+            boundary_prob.sum(dim=-1),
+            torch.ones_like(boundary_prob[..., 0]),
+            atol=1e-5,
+            rtol=1e-5,
+        ):
+            raise ValueError("Boundary probability pairs must sum to 1")
+
+    selected_idx = boundary_mask.to(dtype=torch.long)
+    selected_probs = boundary_prob.gather(
+        dim=-1, index=selected_idx.unsqueeze(-1)
+    )
+    return RoutingModuleOutput(
+        boundary_prob=boundary_prob,
+        boundary_mask=boundary_mask,
+        selected_probs=selected_probs,
+        valid_mask=output.valid_mask,
+    )
+
+
 @dataclass
 class RoutingModuleState:
     """

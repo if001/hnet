@@ -9,7 +9,7 @@ from flash_attn.utils.generation import GenerationMixin
 from .hnet import HNet, HNetState
 from .config_hnet import HNetConfig
 
-from hnet.modules.dc import RoutingModuleOutput
+from hnet.modules.dc import BoundaryOverride, RoutingModuleOutput
 from hnet.modules.utils import apply_optimization_params
 
 @dataclass
@@ -90,6 +90,7 @@ class HNetForCausalLM(nn.Module, GenerationMixin):
         continuation_mask=None,
         continuation_bias: float = 0.0,
         continuation_hard: bool = False,
+        boundary_overrides: list[BoundaryOverride] | None = None,
         **mixer_kwargs,
     ):
         """
@@ -124,6 +125,7 @@ class HNetForCausalLM(nn.Module, GenerationMixin):
             continuation_mask=continuation_mask,
             continuation_bias=continuation_bias,
             continuation_hard=continuation_hard,
+            boundary_overrides=boundary_overrides,
             **mixer_kwargs,
         )
 

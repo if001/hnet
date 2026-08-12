@@ -157,6 +157,15 @@ def parse_args() -> TrainingConfig:
         help="Do not restore step counter from checkpoint when resuming.",
     )
     parser.add_argument(
+        "--freeze-mode",
+        choices=["none", "router", "main"],
+        default="none",
+        help=(
+            "Freeze routing modules (router), freeze all non-router parameters "
+            "(main), or update the full model (none)."
+        ),
+    )
+    parser.add_argument(
         "--rope-type",
         type=str,
         choices=["yarn"],
@@ -270,6 +279,7 @@ def parse_args() -> TrainingConfig:
         resume_from_checkpoint=args.resume_from_checkpoint,
         resume_optimizer=not args.no_resume_optimizer,
         resume_step=not args.no_resume_step,
+        freeze_mode=args.freeze_mode,
         rope_scaling=rope_scaling,
     )
 

@@ -21,6 +21,7 @@ from ..models.mixer_seq import HNetForCausalLM
 from .chunking_utils import format_stage_compact, inspect_prompt_chunks
 from ..utils.train import group_params, load_balancing_loss
 from .config import DatasetSource, TrainingConfig
+from .freezing import apply_freeze_mode
 from .data import (
     DefaultRecordFormatter,
     PackedMixByteDataset,
@@ -835,6 +836,13 @@ def train(training_config: TrainingConfig) -> None:
                 logger.info(
                     "resumed_data_micro_batches=%d", resumed_data_micro_batches
                 )
+    freeze_summary = apply_freeze_mode(model, training_config.freeze_mode)
+    logger.info(
+        "freeze_mode=%s trainable_parameters=%d frozen_parameters=%d",
+        freeze_summary.mode,
+        freeze_summary.trainable_parameters,
+        freeze_summary.frozen_parameters,
+    )
     output_dir = Path(training_config.output_dir)
     saved_config_path = save_hnet_config(model_config, output_dir / "model_config.json")
     logger.info("saved_model_config=%s", saved_config_path)

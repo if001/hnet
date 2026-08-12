@@ -51,4 +51,5 @@ class TrainingConfig:
     resume_from_checkpoint: str | None = None
     resume_optimizer: bool = True
     resume_step: bool = True
+    freeze_mode: str = "none"
     rope_scaling: dict[str, float | int | str] | None = None

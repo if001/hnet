@@ -98,7 +98,10 @@ def test_boundary_override_replaces_mask_and_probabilities() -> None:
 
     assert overridden.boundary_mask.tolist() == [[True, True, False]]
     assert torch.equal(overridden.boundary_prob, probabilities)
-    assert overridden.selected_probs.squeeze(-1).tolist() == [[1.0, 0.8, 0.7]]
+    torch.testing.assert_close(
+        overridden.selected_probs.squeeze(-1),
+        torch.tensor([[1.0, 0.8, 0.7]]),
+    )
 
 
 def test_boundary_override_rejects_invalid_shape() -> None:

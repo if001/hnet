@@ -48,4 +48,6 @@ def test_transplant_boundary_probabilities_preserves_confidence_order() -> None:
 
     transplanted = transplant_boundary_probabilities(output, proposed)
 
-    assert transplanted[0, proposed[0], 1].tolist() == [1.0, 0.8, 0.7]
+    torch.testing.assert_close(
+        transplanted[0, proposed[0], 1], torch.tensor([1.0, 0.8, 0.7])
+    )

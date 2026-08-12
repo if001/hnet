@@ -7,11 +7,16 @@ import json
 import math
 import random
 import subprocess
+import sys
 from collections import defaultdict
 from dataclasses import dataclass
 from pathlib import Path
 from statistics import mean, median, stdev
 from typing import Any
+
+REPOSITORY_ROOT = Path(__file__).resolve().parents[1]
+if str(REPOSITORY_ROOT) not in sys.path:
+    sys.path.insert(0, str(REPOSITORY_ROOT))
 
 import torch
 import torch.nn.functional as F

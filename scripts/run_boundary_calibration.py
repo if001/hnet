@@ -67,9 +67,15 @@ def ratio_tag(value: float) -> str:
     return f"{value:.3f}".rstrip("0").rstrip(".").replace(".", "p")
 
 
-def run_name(main_network: str, ratio_weight: float, commit: str) -> str:
+def run_name(
+    main_network: str,
+    ratio_weight: float,
+    commit: str,
+    outer_compression_target: float = 3.0,
+) -> str:
     return (
-        f"r5_cal_{main_network}_comp3-3_rw{ratio_tag(ratio_weight)}_"
+        f"r5_cal_{main_network}_comp3-{ratio_tag(outer_compression_target)}_"
+        f"rw{ratio_tag(ratio_weight)}_"
         f"utf8hard_s42_step55_{commit[:7]}"
     )
 
@@ -129,6 +135,13 @@ def parse_args() -> argparse.Namespace:
     )
     parser.add_argument("--main", choices=sorted(MODEL_CONFIGS), required=True)
     parser.add_argument("--ratio-weight", type=float, choices=[0.03, 0.05, 0.08], required=True)
+    parser.add_argument(
+        "--outer-compression-target",
+        type=float,
+        choices=[2.5, 3.0, 3.5],
+        default=3.0,
+        help="Compression target for the outer (L1-to-L2) stage.",
+    )
     parser.add_argument("--packed-data-dir", type=Path, required=True)
     parser.add_argument("--packed-validation-data-dir", type=Path, required=True)
     parser.add_argument(
@@ -152,7 +165,12 @@ def main() -> None:
         raise RuntimeError("Calibration must run on kimi_attn_diff")
 
     commit = git_output("rev-parse", "HEAD")
-    name = run_name(args.main, args.ratio_weight, commit)
+    name = run_name(
+        args.main,
+        args.ratio_weight,
+        commit,
+        outer_compression_target=args.outer_compression_target,
+    )
     run_dir = args.work_root / "runs" / name
     archive_dir = archive_root / name
     if run_dir.exists() or archive_dir.exists():
@@ -213,7 +231,7 @@ def main() -> None:
         "--compression-ratio",
         "3",
         "--compression-ratio",
-        "3",
+        str(args.outer_compression_target),
         "--lr-multiplier",
         "2",
         "--lr-multiplier",
@@ -232,6 +250,7 @@ def main() -> None:
         "run_name": name,
         "main_network": args.main,
         "ratio_weight": args.ratio_weight,
+        "compression_targets": [3.0, args.outer_compression_target],
         "command": command,
         "archive_checkpoint": args.archive_checkpoint,
     }

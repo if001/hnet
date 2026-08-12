@@ -71,10 +71,12 @@ def run_name(
     main_network: str,
     ratio_weight: float,
     commit: str,
+    inner_compression_target: float = 3.0,
     outer_compression_target: float = 3.0,
 ) -> str:
     return (
-        f"r5_cal_{main_network}_comp3-{ratio_tag(outer_compression_target)}_"
+        f"r5_cal_{main_network}_comp{ratio_tag(inner_compression_target)}-"
+        f"{ratio_tag(outer_compression_target)}_"
         f"rw{ratio_tag(ratio_weight)}_"
         f"utf8hard_s42_step55_{commit[:7]}"
     )
@@ -136,6 +138,13 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--main", choices=sorted(MODEL_CONFIGS), required=True)
     parser.add_argument("--ratio-weight", type=float, choices=[0.03, 0.05, 0.08], required=True)
     parser.add_argument(
+        "--inner-compression-target",
+        type=float,
+        choices=[2.5, 3.0, 3.5],
+        default=3.0,
+        help="Compression target for the inner (L0-to-L1) stage.",
+    )
+    parser.add_argument(
         "--outer-compression-target",
         type=float,
         choices=[2.5, 3.0, 3.5],
@@ -169,6 +178,7 @@ def main() -> None:
         args.main,
         args.ratio_weight,
         commit,
+        inner_compression_target=args.inner_compression_target,
         outer_compression_target=args.outer_compression_target,
     )
     run_dir = args.work_root / "runs" / name
@@ -229,7 +239,7 @@ def main() -> None:
         "--byte-boundary-constraint",
         "utf8-hard",
         "--compression-ratio",
-        "3",
+        str(args.inner_compression_target),
         "--compression-ratio",
         str(args.outer_compression_target),
         "--lr-multiplier",
@@ -250,7 +260,10 @@ def main() -> None:
         "run_name": name,
         "main_network": args.main,
         "ratio_weight": args.ratio_weight,
-        "compression_targets": [3.0, args.outer_compression_target],
+        "compression_targets": [
+            args.inner_compression_target,
+            args.outer_compression_target,
+        ],
         "command": command,
         "archive_checkpoint": args.archive_checkpoint,
     }

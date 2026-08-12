@@ -14,6 +14,14 @@ def test_ratio_tag_and_run_name_are_stable() -> None:
         == "r5_cal_k1g1_comp3-3_rw0p08_utf8hard_s42_step55_abcdef0"
     )
     assert (
-        run_name("m3t1", 0.08, "abcdef0123", outer_compression_target=2.5)
+        run_name(
+            "m3t1", 0.08, "abcdef0123", outer_compression_target=2.5
+        )
         == "r5_cal_m3t1_comp3-2p5_rw0p08_utf8hard_s42_step55_abcdef0"
+    )
+    assert (
+        run_name(
+            "m3t1", 0.05, "abcdef0123", inner_compression_target=3.5
+        )
+        == "r5_cal_m3t1_comp3p5-3_rw0p05_utf8hard_s42_step55_abcdef0"
     )

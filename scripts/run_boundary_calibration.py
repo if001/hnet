@@ -220,6 +220,8 @@ def main() -> None:
         "32",
         "--max-steps",
         "55",
+        "--lr-schedule-steps",
+        "220",
         "--learning-rate",
         "0.00035",
         "--min-learning-rate",

@@ -1035,12 +1035,26 @@ def train(training_config: TrainingConfig) -> None:
     else:
         logger.info("target_optimizer_steps=%s", target_steps)
 
-    lr_total_steps = target_steps or estimated_optimizer_steps
+    lr_total_steps = (
+        training_config.lr_schedule_steps
+        or target_steps
+        or estimated_optimizer_steps
+    )
+    if (
+        training_config.lr_schedule_steps is not None
+        and target_steps is not None
+        and training_config.lr_schedule_steps < target_steps
+    ):
+        raise ValueError(
+            "lr_schedule_steps must be greater than or equal to max_steps"
+        )
     if lr_total_steps is None:
         logger.info("lr_schedule=warmup_then_constant (no total_steps estimate)")
     else:
         logger.info(
-            "lr_schedule=wsd warmup=10%% stable=70%% decay=20%% decay_shape=inverse_sqrt"
+            "lr_schedule=wsd horizon_steps=%d warmup=10%% stable=70%% "
+            "decay=20%% decay_shape=inverse_sqrt",
+            lr_total_steps,
         )
 
     total_params, trainable_params = count_parameters(model)

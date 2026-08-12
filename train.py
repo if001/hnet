@@ -80,6 +80,15 @@ def parse_args() -> TrainingConfig:
     parser.add_argument("--batch-size", type=int, default=2)
     parser.add_argument("--grad-accum-steps", type=int, default=8)
     parser.add_argument("--max-steps", type=int, default=None)
+    parser.add_argument(
+        "--lr-schedule-steps",
+        type=int,
+        default=None,
+        help=(
+            "Optional WSD schedule horizon. This can exceed --max-steps so a "
+            "short calibration uses the same learning rates as a longer run."
+        ),
+    )
     parser.add_argument("--learning-rate", type=float, default=3e-4)
     parser.add_argument("--min-learning-rate", type=float, default=3e-5)
     parser.add_argument("--warmup-steps", type=int, default=20)
@@ -238,6 +247,7 @@ def parse_args() -> TrainingConfig:
         batch_size=args.batch_size,
         grad_accum_steps=args.grad_accum_steps,
         max_steps=args.max_steps,
+        lr_schedule_steps=args.lr_schedule_steps,
         learning_rate=args.learning_rate,
         min_learning_rate=args.min_learning_rate,
         warmup_steps=args.warmup_steps,

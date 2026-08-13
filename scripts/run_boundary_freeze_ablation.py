@@ -153,6 +153,7 @@ def main() -> None:
         "0",
         "--resume-from-checkpoint",
         str(source_checkpoint),
+        "--no-resume-optimizer",
         "--freeze-mode",
         args.freeze_mode,
     ]

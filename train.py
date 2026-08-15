@@ -81,6 +81,12 @@ def parse_args() -> TrainingConfig:
     parser.add_argument("--grad-accum-steps", type=int, default=8)
     parser.add_argument("--max-steps", type=int, default=None)
     parser.add_argument(
+        "--max-train-bytes",
+        type=int,
+        default=None,
+        help="Stop after consuming at least this many raw input bytes.",
+    )
+    parser.add_argument(
         "--lr-schedule-steps",
         type=int,
         default=None,
@@ -96,7 +102,19 @@ def parse_args() -> TrainingConfig:
     parser.add_argument("--grad-clip-norm", type=float, default=1.0)
     parser.add_argument("--log-every", type=int, default=10)
     parser.add_argument("--save-every", type=int, default=100)
+    parser.add_argument(
+        "--save-every-bytes",
+        type=int,
+        default=None,
+        help="Also save when cumulative raw input bytes cross this interval.",
+    )
     parser.add_argument("--validation-every", type=int, default=100)
+    parser.add_argument(
+        "--validation-every-bytes",
+        type=int,
+        default=None,
+        help="Also validate when cumulative raw input bytes cross this interval.",
+    )
     parser.add_argument("--validation-max-batches", type=int, default=20)
     parser.add_argument("--validation-split-ratio", type=float, default=0.1)
     parser.add_argument("--train-ratio-weight", type=float, default=0.02)
@@ -256,6 +274,7 @@ def parse_args() -> TrainingConfig:
         batch_size=args.batch_size,
         grad_accum_steps=args.grad_accum_steps,
         max_steps=args.max_steps,
+        max_train_bytes=args.max_train_bytes,
         lr_schedule_steps=args.lr_schedule_steps,
         learning_rate=args.learning_rate,
         min_learning_rate=args.min_learning_rate,
@@ -264,7 +283,9 @@ def parse_args() -> TrainingConfig:
         grad_clip_norm=args.grad_clip_norm,
         log_every=args.log_every,
         save_every=args.save_every,
+        save_every_bytes=args.save_every_bytes,
         validation_every=args.validation_every,
+        validation_every_bytes=args.validation_every_bytes,
         validation_max_batches=args.validation_max_batches,
         validation_split_ratio=args.validation_split_ratio,
         train_ratio_weight=args.train_ratio_weight,

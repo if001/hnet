@@ -45,6 +45,7 @@ class TrainingMetricsLogger:
         "elapsed_seconds",
         "step_seconds",
         "input_bytes",
+        "cumulative_input_bytes",
         "input_bytes_per_second",
         "cuda_peak_allocated_mb",
     ]
@@ -92,6 +93,7 @@ class TrainingMetricsLogger:
         input_bytes: int,
         input_bytes_per_second: float,
         cuda_peak_allocated_mb: float,
+        cumulative_input_bytes: int = 0,
     ) -> None:
         with self.output_path.open("a", encoding="utf-8", newline="") as handle:
             writer = csv.DictWriter(handle, fieldnames=self.fieldnames)
@@ -106,6 +108,7 @@ class TrainingMetricsLogger:
                     "elapsed_seconds": elapsed_seconds,
                     "step_seconds": step_seconds,
                     "input_bytes": input_bytes,
+                    "cumulative_input_bytes": cumulative_input_bytes,
                     "input_bytes_per_second": input_bytes_per_second,
                     "cuda_peak_allocated_mb": cuda_peak_allocated_mb,
                 }
@@ -115,6 +118,7 @@ class TrainingMetricsLogger:
 class ValidationMetricsLogger:
     fieldnames = [
         "step",
+        "cumulative_input_bytes",
         "validation_batches",
         "validation_ce_loss",
         "validation_bpb",
@@ -146,8 +150,17 @@ class ValidationMetricsLogger:
             writer = csv.DictWriter(handle, fieldnames=self.fieldnames)
             writer.writeheader()
 
-    def log(self, step: int, metrics: dict[str, Any]) -> None:
-        payload = {"step": step, **metrics}
+    def log(
+        self,
+        step: int,
+        metrics: dict[str, Any],
+        cumulative_input_bytes: int = 0,
+    ) -> None:
+        payload = {
+            "step": step,
+            "cumulative_input_bytes": cumulative_input_bytes,
+            **metrics,
+        }
         with self.output_path.open("a", encoding="utf-8", newline="") as handle:
             writer = csv.DictWriter(handle, fieldnames=self.fieldnames)
             writer.writerow(payload)
@@ -351,6 +364,13 @@ def wsd_schedule(
     current_value = 1.0 / math.sqrt(1.0 + decay_progress * (inverse_sqrt_span - 1.0))
     normalized = (current_value - end_value) / max(1e-8, (1.0 - end_value))
     return min_lr + (max_lr - min_lr) * normalized
+
+
+def crossed_interval(previous: int, current: int, interval: int | None) -> bool:
+    """Return whether a positive cumulative interval was crossed."""
+    if interval is None or interval <= 0 or current <= previous:
+        return False
+    return previous // interval < current // interval
 
 
 def save_training_config(training_config: TrainingConfig, output_path: Path) -> Path:
@@ -826,6 +846,7 @@ def train(training_config: TrainingConfig) -> None:
     resume_checkpoint = None
     resumed_step = 0
     resumed_data_micro_batches = 0
+    resumed_input_bytes = 0
     if training_config.resume_from_checkpoint is not None:
         resume_checkpoint = load_checkpoint_file(
             training_config.resume_from_checkpoint, device
@@ -851,6 +872,10 @@ def train(training_config: TrainingConfig) -> None:
                 logger.info(
                     "resumed_data_micro_batches=%d", resumed_data_micro_batches
                 )
+            raw_input_bytes = data_state.get("cumulative_input_bytes")
+            if isinstance(raw_input_bytes, int) and raw_input_bytes >= 0:
+                resumed_input_bytes = raw_input_bytes
+                logger.info("resumed_input_bytes=%d", resumed_input_bytes)
     freeze_summary = apply_freeze_mode(model, training_config.freeze_mode)
     logger.info(
         "freeze_mode=%s trainable_parameters=%d frozen_parameters=%d",
@@ -1046,6 +1071,10 @@ def train(training_config: TrainingConfig) -> None:
         )
 
     target_steps = training_config.max_steps
+    if training_config.max_train_bytes is not None:
+        if training_config.max_train_bytes <= 0:
+            raise ValueError("max_train_bytes must be positive")
+        logger.info("target_train_bytes=%d", training_config.max_train_bytes)
     if target_steps is None:
         logger.info("epoch_count_mode=streaming_no_prescan")
         if estimated_optimizer_steps is not None:
@@ -1117,10 +1146,15 @@ def train(training_config: TrainingConfig) -> None:
     last_saved_step = 0
     completed_steps = resumed_step
     data_micro_batches_seen = resumed_data_micro_batches
+    cumulative_input_bytes = resumed_input_bytes
     packed_epoch_total_micro_batches = len(dataloader) if use_packed_data else None
 
     while (
-        training_config.max_steps is None or completed_steps < training_config.max_steps
+        (training_config.max_steps is None or completed_steps < training_config.max_steps)
+        and (
+            training_config.max_train_bytes is None
+            or cumulative_input_bytes < training_config.max_train_bytes
+        )
     ):
         step_started_at = time.perf_counter()
         optimizer.zero_grad(set_to_none=True)
@@ -1130,7 +1164,22 @@ def train(training_config: TrainingConfig) -> None:
         micro_batches_processed = 0
         input_bytes_processed = 0
 
-        if lr_total_steps is None:
+        if training_config.max_train_bytes is not None and lr_total_steps is not None:
+            byte_progress = min(
+                cumulative_input_bytes / float(training_config.max_train_bytes),
+                1.0,
+            )
+            schedule_step = min(
+                int(byte_progress * lr_total_steps),
+                max(0, lr_total_steps - 1),
+            )
+            learning_rate = wsd_schedule(
+                step=schedule_step,
+                total_steps=lr_total_steps,
+                max_lr=training_config.learning_rate,
+                min_lr=training_config.min_learning_rate,
+            )
+        elif lr_total_steps is None:
             if completed_steps < training_config.warmup_steps:
                 learning_rate = (
                     training_config.learning_rate
@@ -1270,6 +1319,8 @@ def train(training_config: TrainingConfig) -> None:
             else float("nan")
         )
         completed_steps += 1
+        previous_input_bytes = cumulative_input_bytes
+        cumulative_input_bytes += input_bytes_processed
         average_ce = ce_loss_value / micro_batches_processed
         average_ratio = ratio_loss_value / micro_batches_processed
         average_byte_boundary = byte_boundary_loss_value / micro_batches_processed
@@ -1288,6 +1339,7 @@ def train(training_config: TrainingConfig) -> None:
             elapsed_seconds=elapsed_seconds,
             step_seconds=step_seconds,
             input_bytes=input_bytes_processed,
+            cumulative_input_bytes=cumulative_input_bytes,
             input_bytes_per_second=input_bytes_per_second,
             cuda_peak_allocated_mb=cuda_peak_allocated_mb,
         )
@@ -1364,10 +1416,15 @@ def train(training_config: TrainingConfig) -> None:
                     optimizer_text,
                 )
 
-        if (
+        validation_due = (
             training_config.validation_every > 0
             and completed_steps % training_config.validation_every == 0
-        ):
+        ) or crossed_interval(
+            previous_input_bytes,
+            cumulative_input_bytes,
+            training_config.validation_every_bytes,
+        )
+        if validation_due:
             if device.type == "cuda":
                 logger.info(
                     "event=validation_start step=%d %s",
@@ -1394,6 +1451,7 @@ def train(training_config: TrainingConfig) -> None:
                 validation_metrics_logger.log(
                     step=completed_steps,
                     metrics=validation_metrics,
+                    cumulative_input_bytes=cumulative_input_bytes,
                 )
                 logger.info(
                     "validation step=%d ce=%.4f bpb=%.4f comp(L1/L0)=%.3f comp(L2/L1)=%.3f comp(L2/L0)=%.3f sf0=%.4f sf1=%.4f gap0=%.4f gap1=%.4f mid_utf8=%.4f",
@@ -1426,7 +1484,15 @@ def train(training_config: TrainingConfig) -> None:
             if chunk_report_path is not None:
                 logger.info("saved_validation_chunks=%s", chunk_report_path)
 
-        if completed_steps % training_config.save_every == 0:
+        save_due = (
+            training_config.save_every > 0
+            and completed_steps % training_config.save_every == 0
+        ) or crossed_interval(
+            previous_input_bytes,
+            cumulative_input_bytes,
+            training_config.save_every_bytes,
+        )
+        if save_due:
             if device.type == "cuda":
                 logger.info(
                     "event=save_start step=%d %s",
@@ -1440,6 +1506,7 @@ def train(training_config: TrainingConfig) -> None:
                 output_dir=output_dir,
                 data_state={
                     "micro_batches_seen": data_micro_batches_seen,
+                    "cumulative_input_bytes": cumulative_input_bytes,
                     "epoch_micro_batches_total": int(
                         packed_epoch_total_micro_batches
                         if packed_epoch_total_micro_batches is not None
@@ -1466,6 +1533,7 @@ def train(training_config: TrainingConfig) -> None:
             output_dir=output_dir,
             data_state={
                 "micro_batches_seen": data_micro_batches_seen,
+                "cumulative_input_bytes": cumulative_input_bytes,
                 "epoch_micro_batches_total": int(
                     packed_epoch_total_micro_batches
                     if packed_epoch_total_micro_batches is not None

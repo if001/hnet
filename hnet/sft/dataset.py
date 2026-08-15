@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import ast
 import random
 from dataclasses import dataclass
 import re
@@ -44,6 +45,7 @@ class SFTDataConfig:
     xlam_take: int = 6_000
     toolace_take: int = 2_500
     apigen_mt_take: int = 1_500
+    toucan_take: int = 0
 
 
 def _safe_probs_from_takes(takes: Sequence[int]) -> list[float]:
@@ -111,6 +113,7 @@ def _cfg_with_mix_overrides(cfg: SFTDataConfig) -> SFTDataConfig:
         "xlam_take",
         "toolace_take",
         "apigen_mt_take",
+        "toucan_take",
     }
     updates: dict[str, int] = {}
     for key, value in payload.items():
@@ -300,6 +303,82 @@ def _tool_call_text(value: str) -> str:
 
 def _tool_response_text(value: str) -> str:
     return f"<tool_response>\n{value.strip()}\n</tool_response>"
+
+
+def _parse_json_value(value: object, *, field_name: str) -> object:
+    if not isinstance(value, str):
+        return value
+    try:
+        return json.loads(value)
+    except json.JSONDecodeError as exc:
+        raise ValueError(f"Toucan {field_name} must contain valid JSON") from exc
+
+
+def _normalize_toucan_tool_call(value: str) -> str:
+    try:
+        payload = ast.literal_eval(value)
+    except (SyntaxError, ValueError):
+        payload = _parse_json_value(value, field_name="tool_call")
+    if not isinstance(payload, Mapping):
+        raise ValueError("Toucan tool_call must be an object")
+
+    normalized = dict(payload)
+    arguments = normalized.get("arguments")
+    if isinstance(arguments, str):
+        try:
+            normalized["arguments"] = json.loads(arguments)
+        except json.JSONDecodeError:
+            pass
+    return json.dumps(normalized, ensure_ascii=False, separators=(",", ":"))
+
+
+def _append_or_merge_message(
+    messages: list[ChatMessage], role: str, content: str
+) -> None:
+    cleaned = content.strip()
+    if not cleaned:
+        return
+    if messages and messages[-1]["role"] == role:
+        messages[-1]["content"] = f'{messages[-1]["content"]}\n{cleaned}'
+    else:
+        messages.append({"role": role, "content": cleaned})
+
+
+def _map_toucan(
+    example: Mapping[str, object], default_system_prompt: str
+) -> dict[str, object]:
+    raw_messages = _parse_json_value(example["messages"], field_name="messages")
+    if not _is_mapping_list(raw_messages):
+        raise ValueError("Toucan messages must be a list of objects")
+
+    raw_tools = _parse_json_value(example.get("tools", []), field_name="tools")
+    if not isinstance(raw_tools, list):
+        raise ValueError("Toucan tools must be a list")
+
+    system_parts = [part for part in (default_system_prompt.strip(), "/no_think") if part]
+    if raw_tools:
+        tools_json = json.dumps(raw_tools, ensure_ascii=False, separators=(",", ":"))
+        system_parts.append(f"<tools>\n{tools_json}\n</tools>")
+    messages: list[ChatMessage] = [
+        {"role": "system", "content": "\n".join(system_parts)}
+    ]
+
+    for item in raw_messages:
+        role = str(item.get("role", "")).strip().lower()
+        content = str(item.get("content", "")).strip()
+        if role == "user":
+            _append_or_merge_message(messages, "user", content)
+        elif role == "assistant":
+            _append_or_merge_message(messages, "assistant", content)
+        elif role == "tool_call":
+            tool_call = _normalize_toucan_tool_call(content)
+            _append_or_merge_message(messages, "assistant", _tool_call_text(tool_call))
+        elif role == "tool_response":
+            _append_or_merge_message(messages, "user", _tool_response_text(content))
+        else:
+            raise ValueError(f"Unsupported Toucan role: {role}")
+
+    return {"messages": messages}
 
 
 def _map_apigen_mt(
@@ -575,10 +654,12 @@ def _load_stream(
     dataset_name: str,
     split: str = "train",
     *,
+    config_name: str | None = None,
     trust_remote_code: bool = False,
 ) -> HFIterableDataset:
     return load_dataset(
         dataset_name,
+        config_name,
         split=split,
         streaming=True,
         trust_remote_code=trust_remote_code,
@@ -674,35 +755,58 @@ def build_sft_train_dataset(cfg: SFTDataConfig) -> HFIterableDataset:
     coding = coding.filter(_valid_example).take(cfg.coding_take)
     # _check("coding", coding)
 
-    xlam = _load_stream("Salesforce/xlam-function-calling-60k")
-    xlam = xlam.shuffle(buffer_size=cfg.shuffle_buffer_size, seed=cfg.seed)
-    xlam = xlam.map(
-        lambda ex: _map_xlam(ex, cfg.system_prompt),
-        remove_columns=list(xlam.features.keys()),
-    )
-    xlam = xlam.filter(_valid_example).take(cfg.xlam_take)
-    # _check("xlam", xlam)
+    tool_datasets: list[HFIterableDataset] = []
+    tool_takes: list[int] = []
+    if cfg.xlam_take > 0:
+        xlam = _load_stream("Salesforce/xlam-function-calling-60k")
+        xlam = xlam.shuffle(buffer_size=cfg.shuffle_buffer_size, seed=cfg.seed)
+        xlam = xlam.map(
+            lambda ex: _map_xlam(ex, cfg.system_prompt),
+            remove_columns=list(xlam.features.keys()),
+        )
+        tool_datasets.append(xlam.filter(_valid_example).take(cfg.xlam_take))
+        tool_takes.append(cfg.xlam_take)
 
-    toolace = _load_stream("Team-ACE/ToolACE")
-    toolace = toolace.shuffle(buffer_size=cfg.shuffle_buffer_size, seed=cfg.seed)
-    toolace = toolace.map(
-        lambda ex: _map_toolace(ex, cfg.system_prompt),
-        remove_columns=list(toolace.features.keys()),
-    )
-    toolace = toolace.filter(_valid_example).take(cfg.toolace_take)
-    # _check("toolace", toolace)
+    if cfg.toolace_take > 0:
+        toolace = _load_stream("Team-ACE/ToolACE")
+        toolace = toolace.shuffle(buffer_size=cfg.shuffle_buffer_size, seed=cfg.seed)
+        toolace = toolace.map(
+            lambda ex: _map_toolace(ex, cfg.system_prompt),
+            remove_columns=list(toolace.features.keys()),
+        )
+        tool_datasets.append(toolace.filter(_valid_example).take(cfg.toolace_take))
+        tool_takes.append(cfg.toolace_take)
 
-    apigen_mt = _load_stream("Salesforce/APIGen-MT-5k")
-    apigen_mt = apigen_mt.shuffle(buffer_size=cfg.shuffle_buffer_size, seed=cfg.seed)
-    apigen_mt = apigen_mt.map(
-        lambda ex: _map_apigen_mt(ex, cfg.system_prompt),
-        remove_columns=list(apigen_mt.features.keys()),
-    )
-    apigen_mt = apigen_mt.filter(_valid_example).take(cfg.apigen_mt_take)
+    if cfg.apigen_mt_take > 0:
+        apigen_mt = _load_stream("Salesforce/APIGen-MT-5k")
+        apigen_mt = apigen_mt.shuffle(
+            buffer_size=cfg.shuffle_buffer_size, seed=cfg.seed
+        )
+        apigen_mt = apigen_mt.map(
+            lambda ex: _map_apigen_mt(ex, cfg.system_prompt),
+            remove_columns=list(apigen_mt.features.keys()),
+        )
+        tool_datasets.append(
+            apigen_mt.filter(_valid_example).take(cfg.apigen_mt_take)
+        )
+        tool_takes.append(cfg.apigen_mt_take)
+    if cfg.toucan_take > 0:
+        toucan = _load_stream("Agent-Ark/Toucan-1.5M", config_name="SFT")
+        toucan = toucan.shuffle(buffer_size=cfg.shuffle_buffer_size, seed=cfg.seed)
+        toucan = toucan.map(
+            lambda ex: _map_toucan(ex, cfg.system_prompt),
+            remove_columns=list(toucan.features.keys()),
+        )
+        toucan = toucan.filter(_valid_example).take(cfg.toucan_take)
+        tool_datasets.append(toucan)
+        tool_takes.append(cfg.toucan_take)
+
+    if not tool_datasets:
+        raise ValueError("At least one tool SFT dataset must have a positive take")
 
     tool_pool = _interleave_nonzero(
-        [xlam, toolace, apigen_mt],
-        [cfg.xlam_take, cfg.toolace_take, cfg.apigen_mt_take],
+        tool_datasets,
+        tool_takes,
         seed=cfg.seed,
     )
 
@@ -744,7 +848,7 @@ def build_sft_train_dataset(cfg: SFTDataConfig) -> HFIterableDataset:
             + cfg.select_qa_take,
             cfg.aya_en_take,
             cfg.coding_take,
-            cfg.xlam_take + cfg.toolace_take + cfg.apigen_mt_take,
+            cfg.xlam_take + cfg.toolace_take + cfg.apigen_mt_take + cfg.toucan_take,
         ],
         seed=cfg.seed,
     )

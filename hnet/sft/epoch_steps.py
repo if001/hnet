@@ -27,6 +27,7 @@ def estimate_sft_epoch_steps(
     seed: int,
     chat_tokenizer_path: str,
     mix_config_path: str | None,
+    model_tokenizer_path: str | None = None,
 ) -> SFTEpochEstimate:
     dataset = StreamingSFTByteDataset(
         seq_len=seq_len,
@@ -34,6 +35,7 @@ def estimate_sft_epoch_steps(
         shuffle_buffer_size=shuffle_buffer_size,
         seed=seed,
         chat_tokenizer_path=chat_tokenizer_path,
+        model_tokenizer_path=model_tokenizer_path,
         mix_config_path=mix_config_path,
     )
     dataloader_kwargs: dict[str, object] = {}

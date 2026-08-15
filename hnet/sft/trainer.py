@@ -23,6 +23,7 @@ class SFTTrainConfig:
     pretrained_model_path: str
     output_dir: str = "artifacts/hnet_sft"
     chat_tokenizer_path: str = "Qwen/Qwen3-0.6B"
+    model_tokenizer_path: str | None = None
     mix_config_path: str | None = None
 
     seq_len: int = 512

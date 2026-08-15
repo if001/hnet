@@ -41,6 +41,12 @@ def parse_args() -> argparse.Namespace:
         default=None,
         help="Optional JSON path to override SFT dataset take counts / seed / shuffle buffer.",
     )
+    parser.add_argument(
+        "--model-tokenizer-path",
+        type=str,
+        default=None,
+        help="Optional tokenizer.json used to encode model inputs instead of bytes.",
+    )
     parser.add_argument("--seed", type=int, default=42)
     parser.add_argument("--log-every", type=int, default=200)
     return parser.parse_args()
@@ -56,6 +62,7 @@ def main() -> None:
         f"shuffle_buffer_size={args.shuffle_buffer_size} seed={args.seed} "
         f"chat_tokenizer_path={args.chat_tokenizer_path} packing={args.packing} "
         f"mix_config_path={args.mix_config_path}"
+        f" model_tokenizer_path={args.model_tokenizer_path}"
     )
     print("dataset_source=hnet/sft/dataset.py (sample mix)")
 
@@ -70,6 +77,7 @@ def main() -> None:
         seed=args.seed,
         chat_tokenizer_path=args.chat_tokenizer_path,
         mix_config_path=args.mix_config_path,
+        model_tokenizer_path=args.model_tokenizer_path,
     )
     elapsed = time.time() - start
 

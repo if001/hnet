@@ -595,6 +595,7 @@ def evaluate_validation(
 
     ce_sum = 0.0
     token_count = 0
+    raw_byte_count = 0
     boundary_positions_sample = ""
     stage0_mid_utf8_boundary_fraction_values: list[float] = []
 
@@ -611,7 +612,18 @@ def evaluate_validation(
         input_ids = batch["input_ids"].to(device, non_blocking=True)
         labels = batch["labels"].to(device, non_blocking=True)
         mask = batch["mask"].to(device, non_blocking=True)
-        continuation_mask = build_utf8_continuation_mask(input_ids)
+        target_byte_lengths = batch.get("target_byte_lengths")
+        if target_byte_lengths is None:
+            target_byte_lengths = torch.ones_like(labels)
+        else:
+            target_byte_lengths = target_byte_lengths.to(device, non_blocking=True)
+        is_byte_level = batch.get("is_byte_level")
+        use_utf8_rules = is_byte_level is None or bool(is_byte_level.all())
+        continuation_mask = (
+            build_utf8_continuation_mask(input_ids)
+            if use_utf8_rules
+            else torch.zeros_like(input_ids, dtype=torch.bool)
+        )
 
         with torch.autocast(
             device_type=device.type,
@@ -628,14 +640,17 @@ def evaluate_validation(
                 continuation_hard=training_config.byte_boundary_constraint
                 == "utf8-hard",
             )
-            ce_loss = F.cross_entropy(
+            token_losses = F.cross_entropy(
                 output.logits.reshape(-1, output.logits.shape[-1]),
                 labels.reshape(-1),
+                reduction="none",
             )
 
-        tokens_in_batch = int(labels.numel())
-        ce_sum += float(ce_loss.detach()) * tokens_in_batch
-        token_count += tokens_in_batch
+        byte_lengths_flat = target_byte_lengths.reshape(-1)
+        text_token_mask = byte_lengths_flat > 0
+        ce_sum += float(token_losses[text_token_mask].sum().detach())
+        token_count += int(text_token_mask.sum())
+        raw_byte_count += int(byte_lengths_flat[text_token_mask].sum())
 
         if not boundary_positions_sample and output.bpred_output:
             boundary_positions_sample = _format_boundary_positions(
@@ -692,11 +707,11 @@ def evaluate_validation(
                     mid_utf8_boundary_fraction
                 )
 
-    if processed_batches == 0 or token_count == 0:
+    if processed_batches == 0 or token_count == 0 or raw_byte_count == 0:
         return None
 
     validation_ce = ce_sum / token_count
-    validation_bpb = validation_ce / math.log(2.0)
+    validation_bpb = ce_sum / (raw_byte_count * math.log(2.0))
 
     selected_fraction_by_stage: list[float] = []
     target_ratio_gap_by_stage: list[float] = []
@@ -1141,10 +1156,20 @@ def train(training_config: TrainingConfig) -> None:
             micro_batches_processed += 1
             data_micro_batches_seen += 1
             input_ids = batch["input_ids"].to(device, non_blocking=True)
-            input_bytes_processed += int(input_ids.numel())
             labels = batch["labels"].to(device, non_blocking=True)
             mask = batch["mask"].to(device, non_blocking=True)
-            continuation_mask = build_utf8_continuation_mask(input_ids)
+            target_byte_lengths = batch.get("target_byte_lengths")
+            if target_byte_lengths is None:
+                input_bytes_processed += int(input_ids.numel())
+            else:
+                input_bytes_processed += int(target_byte_lengths.sum())
+            is_byte_level = batch.get("is_byte_level")
+            use_utf8_rules = is_byte_level is None or bool(is_byte_level.all())
+            continuation_mask = (
+                build_utf8_continuation_mask(input_ids)
+                if use_utf8_rules
+                else torch.zeros_like(input_ids, dtype=torch.bool)
+            )
             continuation_bias = (
                 training_config.byte_boundary_constraint_bias
                 if training_config.byte_boundary_constraint == "utf8-soft"

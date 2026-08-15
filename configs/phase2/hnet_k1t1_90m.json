@@ -1,0 +1,29 @@
+{
+  "arch_layout": [
+    "m3",
+    ["T1m3", ["K1T1K1T1K1T1K1T1K1T1K1T1K1T1K1T1K1T1K1T1K1T1"], "m3T1"],
+    "m3"
+  ],
+  "d_model": [384, 384, 512],
+  "d_intermediate": [0, 1024, 1376],
+  "vocab_size": 256,
+  "ssm_cfg": {
+    "chunk_size": 256,
+    "d_conv": 4,
+    "d_state": 128,
+    "expand": 2
+  },
+  "attn_cfg": {
+    "num_heads": [6, 6, 8],
+    "rotary_emb_dim": [32, 32, 32],
+    "window_size": [1023, 1023, -1]
+  },
+  "kda_cfg": {
+    "num_heads": [6, 6, 8],
+    "head_dim": [64, 64, 64],
+    "short_conv_kernel_size": 4,
+    "use_full_rank_gate": true,
+    "gate_lower_bound": -5.0
+  },
+  "tie_embeddings": false
+}

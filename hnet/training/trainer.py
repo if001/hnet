@@ -21,6 +21,7 @@ from ..models.mixer_seq import HNetForCausalLM
 from .chunking_utils import format_stage_compact, inspect_prompt_chunks
 from ..utils.train import group_params, load_balancing_loss
 from .config import DatasetSource, TrainingConfig
+from .freezing import apply_freeze_mode
 from .data import (
     DefaultRecordFormatter,
     PackedMixByteDataset,
@@ -835,6 +836,13 @@ def train(training_config: TrainingConfig) -> None:
                 logger.info(
                     "resumed_data_micro_batches=%d", resumed_data_micro_batches
                 )
+    freeze_summary = apply_freeze_mode(model, training_config.freeze_mode)
+    logger.info(
+        "freeze_mode=%s trainable_parameters=%d frozen_parameters=%d",
+        freeze_summary.mode,
+        freeze_summary.trainable_parameters,
+        freeze_summary.frozen_parameters,
+    )
     output_dir = Path(training_config.output_dir)
     saved_config_path = save_hnet_config(model_config, output_dir / "model_config.json")
     logger.info("saved_model_config=%s", saved_config_path)
@@ -1035,12 +1043,26 @@ def train(training_config: TrainingConfig) -> None:
     else:
         logger.info("target_optimizer_steps=%s", target_steps)
 
-    lr_total_steps = target_steps or estimated_optimizer_steps
+    lr_total_steps = (
+        training_config.lr_schedule_steps
+        or target_steps
+        or estimated_optimizer_steps
+    )
+    if (
+        training_config.lr_schedule_steps is not None
+        and target_steps is not None
+        and training_config.lr_schedule_steps < target_steps
+    ):
+        raise ValueError(
+            "lr_schedule_steps must be greater than or equal to max_steps"
+        )
     if lr_total_steps is None:
         logger.info("lr_schedule=warmup_then_constant (no total_steps estimate)")
     else:
         logger.info(
-            "lr_schedule=wsd warmup=10%% stable=70%% decay=20%% decay_shape=inverse_sqrt"
+            "lr_schedule=wsd horizon_steps=%d warmup=10%% stable=70%% "
+            "decay=20%% decay_shape=inverse_sqrt",
+            lr_total_steps,
         )
 
     total_params, trainable_params = count_parameters(model)

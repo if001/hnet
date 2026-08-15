@@ -1,0 +1,84 @@
+{
+  "targets": ["笑っている", "書いている", "validation_loss", "query", "assistant"],
+  "categories": {
+    "inflection": [
+      "彼は静かに笑う。", "昨日、彼は大声で笑った。", "彼女はいま笑っている。", "赤ちゃんを笑わせる。",
+      "緊張して笑えなかった。", "毎朝、日記を書く。", "昨日は長い手紙を書いた。", "彼はいま報告書を書いている。",
+      "先生が生徒に作文を書かせる。", "この漢字は簡単に書ける。", "私は技術書を読む。", "昨夜その小説を読んだ。",
+      "学生に論文を読ませる。", "難しい文章を読ませられる。", "雨が強く降る。", "朝から雨が降っている。",
+      "花が庭に咲いた。", "春には桜が咲いている。", "設定を変更しなかった。", "結果を詳しく確認させる。"
+    ],
+    "context_pair": [
+      "赤ちゃんが笑っている。", "彼女は冗談を聞いて笑っている。", "彼は失敗をごまかすように笑っている。", "「笑っている」という文字列を検索する。",
+      "写真の中で子供が笑っている。", "誰も笑っていない。", "笑っている人を見つけた。", "彼が笑っているか確認した。",
+      "彼女は報告書を書いている。", "画面に「書いている」と表示された。", "机で手紙を書いている学生がいる。", "誰が書いているのか分からない。",
+      "猫が机の下で眠っている。", "猫という変数名をコードで使う。", "東京でモデルを学習する。", "「東京」をqueryに設定する。",
+      "結果を確認した。", "resultの値を確認した。", "境界を変更しなかった。", "boundary_maskを変更しなかった。"
+    ],
+    "compound": [
+      "高性能計算機資源を利用した。", "自然言語処理モデルを追加学習する。", "動的チャンク境界を可視化する。", "分散並列学習環境を構築した。",
+      "自己回帰型言語モデルを評価する。", "機械翻訳評価指標を比較した。", "深層学習用演算装置を準備する。", "長文文脈理解能力を測定した。",
+      "日本語形態素解析器を実行する。", "境界介入実験結果を保存した。", "実効圧縮率調整係数を選ぶ。", "学習済み重み診断を開始した。",
+      "バイト単位予測損失を計算する。", "乱数生成初期値を固定した。", "系列処理特性の差を調べる。", "勾配累積回数を増やした。",
+      "検証用データ集合を固定する。", "注意機構混合構成を比較した。", "チェックポイント再現性を確認する。", "局所損失プロファイルを出力する。"
+    ],
+    "clause": [
+      "猫が机の下で眠っている。", "雨が降っているので、今日は家で作業する。", "結果を確認したが、設定は変更しなかった。", "学習が終わったら、重みを保存する。",
+      "入力は短いけれど、処理には時間がかかる。", "値が正しければ、そのまま次へ進む。", "エラーが出たため、設定を見直した。", "彼は本を読み、要点をノートに書いた。",
+      "雨は止んだものの、空はまだ暗い。", "準備が整うまで、実験を開始しない。", "結果を見ると、仮説は支持されていた。", "速度は遅いが、損失は安定している。",
+      "データを固定してから、各構成を比較する。", "境界が自然でも、損失が低いとは限らない。", "文脈を延長すると、先頭の境界が変化した。", "同じseedを使えば、順序も一致する。",
+      "出力を保存し、それからhashを計算する。", "圧縮率を揃えても、分割の差は残った。", "モデルを読み込む際は、設定も確認する。", "評価が失敗した場合には、原因を記録する。"
+    ],
+    "mixed_ascii": [
+      "Pythonで学習スクリプトを書いた。", "validation_lossをstep=110で確認する。", "/content/drive/MyDrive/hnet_agent_kda/runs/を参照する。", "boundary_mask=Trueの位置を保存する。",
+      "model.forward()のlogitsを比較した。", "JSONのqueryフィールドを読む。", "checkpoint_step_000220.ptをロードする。", "CUDA_VISIBLE_DEVICES=0で実行した。",
+      "K1T1とM3T1のBPBを比較する。", "random_seed=42をmanifest.jsonへ書く。", "git pull origin kimi_attn_diffを実行する。", "torch.allclose(a, b)で同値を確認する。",
+      "ΔBPB = BPB_fixed - BPB_learnedと定義する。", "stage0のL1/L0は3.7だった。", "fugashi[unidic-lite]をPrepareで導入する。", "output_dir='/content/drive/MyDrive/hnet_agent_kda_diff'を使う。",
+      "TypeScriptのfunction_nameを呼び出す。", "HTTP 500: internal_server_errorを記録する。", "配列[1, 2, 3]をNumPyへ渡す。", "README.mdのUsageセクションを確認する。"
+    ],
+    "agent": [
+      "system: あなたは開発支援AIです。\nuser: テストを実行してください。\nassistant: 実行結果を確認します。", "user: ファイルを検索して。\nassistant: rgで対象を探します。", "system: 日本語で答える。\nuser: 学習lossを比較して。\nassistant: 同じstepで比較します。", "user: checkpointを読み込んで。\nassistant: model_config.jsonも使用します。",
+      "user: queryを送信して。\nassistant: {\"query\":\"東京の天気\"}", "tool: {\"status\":500,\"error\":\"timeout\"}\nassistant: 再試行条件を確認します。", "user: branchは何？\nassistant: kimi_attn_diffです。", "system: 変更前に差分を確認する。\nassistant: git diff --checkを実行します。",
+      "user: Driveへ保存して。\nassistant: /content/drive/MyDrive/hnet_agent_kda_diffへ保存します。", "user: 固定幅境界で評価して。\nassistant: Learnedと同じchunk数に揃えます。", "tool: {\"path\":\"checkpoint.pt\",\"step\":220}\nassistant: hashをmanifestへ記録します。", "user: randomを5 seedで回して。\nassistant: 平均と95%信頼区間を出します。",
+      "system: UTF-8を破壊しない。\nuser: 日本語probeを評価して。\nassistant: continuation byteを候補から除外します。", "user: Morph条件は？\nassistant: 形態素境界を優先して数を調整します。", "user: loss profileを見せて。\nassistant: 境界前後-4から+8 bytesを集計します。", "tool: {\"cmd\":\"python train.py --help\"}\nassistant: exit codeは0です。",
+      "user: 同じ部分文字列を調べて。\nassistant: 笑っているのoffsetを比較します。", "system: 実験条件を固定する。\nuser: seedは？\nassistant: 42です。", "user: Colabでpullして。\nassistant: origin/kimi_attn_diffを取得します。", "tool: {\"bpb\":1.23,\"l2_l0\":10.7}\nassistant: 条件内なので候補に残します。"
+    ]
+  },
+  "long_documents": [
+    {
+      "id": "long-explanation",
+      "category": "long_explanation",
+      "repeat": 20,
+      "prefix_bytes": [256, 512, 1024, 2048],
+      "text": "動的チャンクモデルでは、入力バイト列を複数段のrouterが圧縮し、内側のmain networkが短くなった系列を処理する。境界の見た目だけでは有用性を判断できないため、同じchunk数を保った反実仮想境界で予測損失を比較する。"
+    },
+    {
+      "id": "long-dialogue",
+      "category": "long_dialogue",
+      "repeat": 24,
+      "prefix_bytes": [256, 512, 1024, 2048],
+      "text": "質問: 実験の進捗はどうですか。回答: checkpointと設定のhashを確認し、同じvalidation入力で評価しています。質問: 境界は安定していますか。回答: prefix延長時とseed間の一致率をこれから集計します。"
+    },
+    {
+      "id": "long-technical",
+      "category": "long_technical",
+      "repeat": 20,
+      "prefix_bytes": [256, 512, 1024, 2048],
+      "text": "評価処理はinput_idsとlabelsを1 byteずらして作成し、cross_entropyを自然対数からbits per byteへ変換する。Fixed、Random、Morph、Shiftedの各条件はstageごとの選択数をLearnedと一致させる。"
+    },
+    {
+      "id": "long-agent",
+      "category": "long_agent",
+      "repeat": 18,
+      "prefix_bytes": [256, 512, 1024, 2048],
+      "text": "system: あなたは実験エージェントです。\nuser: kimi_attn_diffをpullして評価を続けてください。\nassistant: Prepare後にcheckpointを読み込みます。\ntool: {\"status\":\"ok\",\"path\":\"/content/drive/MyDrive/hnet_agent_kda_diff\"}\n"
+    },
+    {
+      "id": "long-code-json",
+      "category": "long_code_json",
+      "repeat": 22,
+      "prefix_bytes": [256, 512, 1024, 2048],
+      "text": "def evaluate(model, batch):\n    output = model(**batch)\n    return {\"validation_loss\": float(output.loss), \"query\": \"笑っている\", \"stage\": 1}\n# 日本語とidentifier内部の境界を同時に記録する。\n"
+    }
+  ]
+}

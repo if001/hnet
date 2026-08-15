@@ -28,6 +28,7 @@ class TrainingConfig:
     batch_size: int = 2
     grad_accum_steps: int = 8
     max_steps: int | None = None
+    lr_schedule_steps: int | None = None
     learning_rate: float = 3e-4
     min_learning_rate: float = 3e-5
     warmup_steps: int = 20
@@ -50,4 +51,5 @@ class TrainingConfig:
     resume_from_checkpoint: str | None = None
     resume_optimizer: bool = True
     resume_step: bool = True
+    freeze_mode: str = "none"
     rope_scaling: dict[str, float | int | str] | None = None

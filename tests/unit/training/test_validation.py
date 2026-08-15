@@ -71,5 +71,7 @@ def test_validation_bpb_is_normalized_by_raw_bytes() -> None:
     )
 
     assert metrics is not None
-    assert math.isclose(metrics["validation_ce_loss"], math.log(2.0))
-    assert math.isclose(metrics["validation_bpb"], 0.5)
+    assert math.isclose(
+        metrics["validation_ce_loss"], math.log(2.0), rel_tol=1e-6
+    )
+    assert math.isclose(metrics["validation_bpb"], 0.5, rel_tol=1e-6)

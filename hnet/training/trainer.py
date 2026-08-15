@@ -145,6 +145,23 @@ class ValidationMetricsLogger:
 
     def _initialize_file(self) -> None:
         if self.append and self.output_path.exists():
+            with self.output_path.open(encoding="utf-8", newline="") as handle:
+                reader = csv.DictReader(handle)
+                existing_fieldnames = reader.fieldnames or []
+                existing_rows = list(reader)
+            if existing_fieldnames == self.fieldnames:
+                return
+            if not set(existing_fieldnames).issubset(self.fieldnames):
+                raise ValueError(
+                    "Existing validation metrics columns are incompatible: "
+                    f"{existing_fieldnames}"
+                )
+            with self.output_path.open(
+                "w", encoding="utf-8", newline=""
+            ) as handle:
+                writer = csv.DictWriter(handle, fieldnames=self.fieldnames)
+                writer.writeheader()
+                writer.writerows(existing_rows)
             return
         with self.output_path.open("w", encoding="utf-8", newline="") as handle:
             writer = csv.DictWriter(handle, fieldnames=self.fieldnames)

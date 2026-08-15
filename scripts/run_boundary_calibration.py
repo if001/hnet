@@ -26,7 +26,8 @@ PROBES = [
     "validation_lossをstep=55で確認する。",
     '{"tool":"search","query":"東京の天気"}',
 ]
-ARCHIVE_PREFIX = Path("/content/drive/MyDrive/hnet_agent_kda_diff")
+ARCHIVE_PREFIX = Path("/content/drive/MyDrive/hnet_agent_200m_main")
+EXPECTED_BRANCH = "200m_main"
 
 
 def sha256_file(path: Path) -> str:
@@ -73,12 +74,13 @@ def run_name(
     commit: str,
     inner_compression_target: float = 3.0,
     outer_compression_target: float = 3.0,
+    seed: int = 42,
 ) -> str:
     return (
         f"r5_cal_{main_network}_comp{ratio_tag(inner_compression_target)}-"
         f"{ratio_tag(outer_compression_target)}_"
         f"rw{ratio_tag(ratio_weight)}_"
-        f"utf8hard_s42_step55_{commit[:7]}"
+        f"utf8hard_s{seed}_step55_{commit[:7]}"
     )
 
 
@@ -137,6 +139,7 @@ def parse_args() -> argparse.Namespace:
     )
     parser.add_argument("--main", choices=sorted(MODEL_CONFIGS), required=True)
     parser.add_argument("--ratio-weight", type=float, choices=[0.03, 0.05, 0.08], required=True)
+    parser.add_argument("--seed", type=int, choices=[42, 43, 44], default=42)
     parser.add_argument(
         "--inner-compression-target",
         type=float,
@@ -154,7 +157,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--packed-data-dir", type=Path, required=True)
     parser.add_argument("--packed-validation-data-dir", type=Path, required=True)
     parser.add_argument(
-        "--work-root", type=Path, default=Path("/content/hnet_agent_kda_diff_work")
+        "--work-root", type=Path, default=Path("/content/hnet_agent_200m_main_work")
     )
     parser.add_argument("--archive-root", type=Path, default=ARCHIVE_PREFIX / "runs")
     parser.add_argument("--archive-checkpoint", action="store_true")
@@ -170,14 +173,15 @@ def main() -> None:
     archive_root = args.archive_root.resolve()
     if not archive_root.is_relative_to(ARCHIVE_PREFIX):
         raise ValueError(f"Archive root must be under {ARCHIVE_PREFIX}")
-    if git_output("branch", "--show-current") != "kimi_attn_diff":
-        raise RuntimeError("Calibration must run on kimi_attn_diff")
+    if git_output("branch", "--show-current") != EXPECTED_BRANCH:
+        raise RuntimeError(f"Calibration must run on {EXPECTED_BRANCH}")
 
     commit = git_output("rev-parse", "HEAD")
     name = run_name(
         args.main,
         args.ratio_weight,
         commit,
+        seed=args.seed,
         inner_compression_target=args.inner_compression_target,
         outer_compression_target=args.outer_compression_target,
     )
@@ -251,7 +255,7 @@ def main() -> None:
         "--lr-multiplier",
         "1",
         "--seed",
-        "42",
+        str(args.seed),
         "--num-workers",
         "0",
     ]
@@ -266,6 +270,7 @@ def main() -> None:
             args.inner_compression_target,
             args.outer_compression_target,
         ],
+        "seed": args.seed,
         "command": command,
         "archive_checkpoint": args.archive_checkpoint,
     }
@@ -281,7 +286,7 @@ def main() -> None:
     manifest = {
         "run_name": name,
         "commit": commit,
-        "branch": "kimi_attn_diff",
+        "branch": EXPECTED_BRANCH,
         "git_dirty": bool(git_output("status", "--porcelain")),
         "model_config": MODEL_CONFIGS[args.main],
         "model_config_sha256": sha256_file(Path(MODEL_CONFIGS[args.main])),

@@ -1,5 +1,5 @@
 {
-  "arch_layout": ["T8"],
+  "arch_layout": ["T10"],
   "d_model": [512],
   "d_intermediate": [1376],
   "vocab_size": 128000,

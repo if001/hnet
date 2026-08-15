@@ -46,6 +46,23 @@ JSONは
   `/content/drive/MyDrive/hnet_agent_200m_main/tokenizers/128k`および
   `data/tokenized/`へ保存する。
 
+### Colab作成・監査結果
+
+- actual vocab: 128,000、tokenizer SHA256:
+  `9e003d8ccfdba4bf0ce2c225a85c7614ef031c77034061a34a430e95c9befc75`
+- train: 100,000 documents、99,475,679 tokens、518,781,601 raw bytes、
+  48,546 samples at 2,048 tokens。
+- validation: 3,103 documents、1,925,680 tokens、10,976,867 raw bytes、
+  938 samples at 2,048 tokens。
+- train全体は特殊token込みで5.215 raw bytes/token。
+- 256文書を再encodeし、token byte-length lookupの合計と元UTF-8 byte長が
+  全件一致した。
+- 詳細はDriveの`tokenizers/128k/audit.json`へ保存した。
+
+raw bytes/updateを約262kへ揃える初期値として、H-Netはbatch 4・grad accumulation
+32、tokenizerはbatch 4・grad accumulation 6を使う。最終値は1-step memory
+calibration後に固定する。
+
 ## 実装と検証
 
 - `train.py`とtrainerへ`max_train_bytes`、byte間隔のsave/validation、

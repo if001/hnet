@@ -200,6 +200,7 @@ def train(config: SFTTrainConfig) -> None:
         train_dataset=train_dataset,
         ratio_weight=config.train_ratio_weight,
         compression_ratios=config.compression_ratios or [4.0],
+        use_utf8_hard_boundaries=config.model_tokenizer_path is None,
     )
 
     trainer.train()

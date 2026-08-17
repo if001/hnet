@@ -168,6 +168,10 @@ def build_training_arguments(
         logging_steps=config.logging_steps,
         save_steps=config.save_steps,
         save_strategy="steps",
+        # H-Net ties the input embedding and LM-head weights. The generic
+        # Trainer safetensors checkpoint path rejects shared storage, whereas
+        # the native PyTorch format preserves the tied parameters correctly.
+        save_safetensors=False,
         save_total_limit=3,
         dataloader_num_workers=config.num_workers,
         dataloader_persistent_workers=config.num_workers > 0,

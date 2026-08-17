@@ -34,6 +34,9 @@ SFTの標準である`{"name": ..., "arguments": ...}`を主形式として採�
 - Phase 1で固定した実用同等幅は`0.009626833718514239 BPB`とする。
 - K1T1を選ぶ条件は、2 seed平均でT26を同等幅より大きく改善するか、agent proxyの
   主要指標を10 percentage points以上改善し、その方向が両seedで一致することとする。
+- agent proxyの主要選定指標は、JSON妥当性、tool名、引数がすべて一致する
+  `full_exact_rate`とする。10 percentage points条件は各pretraining seedで個別に満たす
+  必要があり、JSON妥当率とtool accuracyは退行検出の補助指標とする。
 - 上記を満たしても、category BPBの重大退行、学習不安定、throughputまたはmemoryで
   明確に支配される場合はK1T1を選ばない。
 - 差が同等幅内、指標間で不一致、または全モデルがfloorに近い場合は、単純で

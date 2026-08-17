@@ -363,6 +363,11 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--dtype", choices=["auto", "bf16", "fp16", "fp32"], default="auto")
     parser.add_argument("--utf8-hard", action="store_true")
     parser.add_argument("--max-records", type=int)
+    parser.add_argument(
+        "--compact",
+        action="store_true",
+        help="Skip per-probe chunk and next-byte files while retaining aggregate artifacts.",
+    )
     return parser.parse_args()
 
 
@@ -376,8 +381,9 @@ def main() -> None:
     args.output_dir.mkdir(parents=True, exist_ok=True)
     chunk_dir = args.output_dir / "validation_chunks"
     prediction_dir = args.output_dir / "probe_predictions"
-    chunk_dir.mkdir(exist_ok=True)
-    prediction_dir.mkdir(exist_ok=True)
+    if not args.compact:
+        chunk_dir.mkdir(exist_ok=True)
+        prediction_dir.mkdir(exist_ok=True)
 
     model = load_from_pretrained(
         str(args.model_path), str(args.config_path), requested_dtype=args.dtype
@@ -484,15 +490,18 @@ def main() -> None:
                 chunk_name = f"{record.probe_id}_{mode}"
                 if run_seed is not None:
                     chunk_name += f"_s{run_seed}"
-                (chunk_dir / f"{chunk_name}.txt").write_text(
-                    record.text + "\n" + "\n".join(rendered) + "\n",
-                    encoding="utf-8",
-                )
-                top_ids = torch.topk(result.logits[0, -1].float(), k=5).indices.tolist()
-                (prediction_dir / f"{chunk_name}.json").write_text(
-                    json.dumps({"next_byte_top5": top_ids}, indent=2) + "\n",
-                    encoding="utf-8",
-                )
+                if not args.compact:
+                    (chunk_dir / f"{chunk_name}.txt").write_text(
+                        record.text + "\n" + "\n".join(rendered) + "\n",
+                        encoding="utf-8",
+                    )
+                    top_ids = torch.topk(
+                        result.logits[0, -1].float(), k=5
+                    ).indices.tolist()
+                    (prediction_dir / f"{chunk_name}.json").write_text(
+                        json.dumps({"next_byte_top5": top_ids}, indent=2) + "\n",
+                        encoding="utf-8",
+                    )
                 for stage, stage_positions in enumerate(learned_boundary_positions):
                     for boundary_position in stage_positions:
                         for relative in range(-4, 9):
@@ -560,6 +569,7 @@ def main() -> None:
         "torch_version": torch.__version__,
         "cuda_device": torch.cuda.get_device_name(0) if torch.cuda.is_available() else None,
         "learned_boundary_identity_check": "passed",
+        "compact": args.compact,
     }
     (args.output_dir / "manifest.json").write_text(
         json.dumps(manifest, ensure_ascii=False, indent=2) + "\n", encoding="utf-8"

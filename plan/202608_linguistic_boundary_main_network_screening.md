@@ -99,7 +99,9 @@ raw-byte予算、context length、checkpoint間隔、byte-boundary-constraintで
    `3.0 stage0 chunks/stage1 chunk`とする。
 5. 低圧縮`2.5 x 2.5`、高圧縮`3.5 x 3.5`でも感度分析する。
 6. 学習時hard maskは`native`補助比較として残す。
-7. stage 0とstage 1を分けて評価する。
+7. stage 0とstage 1を分けて評価する。日本語では中央profileのstage 0が約1 codepointに
+   相当するため、main network選定の言語的境界proxyはstage 1を主要対象とする。
+   stage 0は下位byte圧縮とstage 1入力の診断として扱う。
 
 先頭境界などモデル実行上必須の位置は全条件で保持する。UTF-8安全位置への強制射影は
 行わない。強制profileは学習時routerの確率順位を比較するための評価条件であり、その
@@ -118,7 +120,8 @@ profileで学習済みであるとは解釈しない。
 
 ### 7.2 補助指標
 
-- stage別chunk長分布、1/2/3 codepoint相当spanの分布。
+- stage別chunk長分布、1/2/3 codepoint相当spanの分布。言語的自然さの順位はstage 1を
+  主とし、stage 0の言語スコアを同じ重みで合算しない。
 - category別境界数とboundary probability margin。
 - seed間・checkpoint間の主要指標の範囲と順位安定性。
 - validation BPBと圧縮率。

@@ -14,6 +14,8 @@ CONDITIONS = {
     "k1t1": {"ratio_weight": 0.05, "inner": 3.0, "outer": 3.0},
     "m3t1": {"ratio_weight": 0.05, "inner": 3.0, "outer": 2.5},
     "k1g1": {"ratio_weight": 0.08, "inner": 3.0, "outer": 2.5},
+    "k3t1": {"ratio_weight": 0.05, "inner": 3.0, "outer": 3.0},
+    "k3g1": {"ratio_weight": 0.08, "inner": 3.0, "outer": 2.5},
 }
 
 

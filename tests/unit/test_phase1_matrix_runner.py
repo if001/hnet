@@ -5,6 +5,8 @@ from scripts.run_phase1_matrix import parse_run
 
 def test_parse_run_accepts_phase1_candidates() -> None:
     assert parse_run("k1g1:44") == ("k1g1", 44)
+    assert parse_run("k3g1:42") == ("k3g1", 42)
+    assert parse_run("k3t1:43") == ("k3t1", 43)
     assert parse_run("t26:42") == ("t26", 42)
 
 

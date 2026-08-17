@@ -1,6 +1,6 @@
 {
   "format": "hnet_agent_proxy_eval_v1",
-  "response_format": {"tool": "tool_name", "arguments": {}},
+  "response_format": {"name": "tool_name", "arguments": {}},
   "tasks": [
     {"id": "weather-ja-01", "category": "ja", "tools": [{"name": "get_weather", "arguments": {"location": "string", "date": "string"}}, {"name": "search_docs", "arguments": {"query": "string", "top_k": "integer"}}], "user": "2026年8月20日の札幌の天気を調べてください。", "expected_tool": "get_weather", "expected_arguments": {"location": "札幌", "date": "2026-08-20"}},
     {"id": "weather-en-01", "category": "en", "tools": [{"name": "get_weather", "arguments": {"location": "string", "date": "string"}}, {"name": "calculator", "arguments": {"expression": "string"}}], "user": "Check the weather in London on 2026-09-03.", "expected_tool": "get_weather", "expected_arguments": {"location": "London", "date": "2026-09-03"}},

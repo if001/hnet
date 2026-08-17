@@ -24,12 +24,12 @@ def render_prompt(task: dict[str, Any]) -> str:
     tools = json.dumps(task["tools"], ensure_ascii=False, separators=(",", ":"))
     return (
         "<|im_start|>system\n"
-        "You are a tool-calling assistant. /no_think\n"
-        "Return exactly one JSON object with keys tool and arguments."
+        "You are a helpful assistant.\n"
+        "/no_think\n"
+        f"<tools>\n{tools}\n</tools>"
         "<|im_end|>\n"
         "<|im_start|>user\n"
-        f"Available tools: {tools}\n"
-        f"Request: {task['user']}\n"
+        f"{task['user']}\n"
         "<|im_end|>\n"
         "<|im_start|>assistant\n"
     )
@@ -71,7 +71,9 @@ def extract_first_json_object(text: str) -> dict[str, Any] | None:
 def score_response(task: dict[str, Any], text: str) -> dict[str, Any]:
     payload = extract_first_json_object(text)
     valid_json = payload is not None
-    predicted_tool = payload.get("tool") if payload else None
+    predicted_tool = (
+        payload.get("name", payload.get("tool")) if payload else None
+    )
     predicted_arguments = payload.get("arguments") if payload else None
     tool_correct = predicted_tool == task["expected_tool"]
     arguments_exact = predicted_arguments == task["expected_arguments"]

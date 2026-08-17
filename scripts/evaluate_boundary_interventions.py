@@ -332,6 +332,12 @@ def bootstrap_interval(values: list[float], seed: int = 42, samples: int = 2000)
     return estimates[int(0.025 * (samples - 1))], estimates[int(0.975 * (samples - 1))]
 
 
+def bits_per_raw_byte(token_loss: torch.Tensor, raw_bytes: int) -> float:
+    if raw_bytes <= 0:
+        raise ValueError("raw_bytes must be positive")
+    return float(token_loss.sum().item()) / (raw_bytes * math.log(2.0))
+
+
 def write_csv(path: Path, rows: list[dict[str, Any]]) -> None:
     if not rows:
         return
@@ -455,15 +461,18 @@ def main() -> None:
                     result.logits[0].float(), labels[0], reduction="none"
                 )
                 ce = float(token_loss.mean().item())
-                bpb = ce / math.log(2.0)
+                raw_bytes = len(record.text.encode("utf-8"))
+                bpb = bits_per_raw_byte(token_loss, raw_bytes)
                 if mode == "learned":
                     reference_bpb = bpb
                 if reference_bpb is None:
-                    reference_bpb = float(
+                    reference_bpb = bits_per_raw_byte(
                         F.cross_entropy(
-                            learned_result.logits[0].float(), labels[0]
-                        ).item()
-                        / math.log(2.0)
+                            learned_result.logits[0].float(),
+                            labels[0],
+                            reduction="none",
+                        ),
+                        raw_bytes,
                     )
                 evaluation_rows.append(
                     {
@@ -471,7 +480,7 @@ def main() -> None:
                         "category": record.category,
                         "mode": mode,
                         "random_seed": run_seed,
-                        "input_bytes": len(record.text.encode("utf-8")),
+                        "input_bytes": raw_bytes,
                         "ce_loss": ce,
                         "bpb": bpb,
                         "delta_bpb": bpb - reference_bpb,

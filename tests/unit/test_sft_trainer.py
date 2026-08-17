@@ -1,14 +1,21 @@
-from hnet.sft.trainer import SFTTrainConfig, build_training_arguments
+from types import SimpleNamespace
+
+import torch
+
+from hnet.sft.trainer import HNetSFTTrainer
 
 
-def test_training_arguments_use_pytorch_checkpoints_for_tied_weights(tmp_path):
-    config = SFTTrainConfig(
-        model_config_path="model.json",
-        pretrained_model_path="checkpoint.pt",
-        output_dir=str(tmp_path),
-        max_steps=1,
-    )
+def test_trainer_checkpoint_preserves_tied_weights(tmp_path):
+    shared_weight = torch.nn.Parameter(torch.arange(6, dtype=torch.float32))
+    model = torch.nn.Module()
+    model.register_parameter("embedding_weight", shared_weight)
+    model.register_parameter("lm_head_weight", shared_weight)
+    trainer = object.__new__(HNetSFTTrainer)
+    trainer.model = model
+    trainer.args = SimpleNamespace(output_dir=str(tmp_path))
 
-    arguments = build_training_arguments(config)
+    trainer._save()
 
-    assert arguments.save_safetensors is False
+    state = torch.load(tmp_path / "pytorch_model.bin", weights_only=True)
+    assert state["embedding_weight"].data_ptr() == state["lm_head_weight"].data_ptr()
+    assert (tmp_path / "training_args.bin").is_file()

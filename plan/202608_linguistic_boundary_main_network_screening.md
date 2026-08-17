@@ -91,14 +91,19 @@ raw-byte予算、context length、checkpoint間隔、byte-boundary-constraintで
 分割品質は境界数に依存するため、各候補を元のhard maskだけで直接比較しない。
 
 1. routerのboundary probabilityとvalid maskを保存する。
-2. stage別・record別に共通の境界数を定める。
-3. 各候補のboundary probability上位位置から、同数の境界を選ぶ。
-4. 主比較は共通境界予算で行い、学習時hard maskは補助比較として残す。
-5. stage 0とstage 1を分けて評価する。
+2. 入力byte数から共通のstage 0境界数を決め、各候補のboundary probability上位位置を
+   選んでstage 0 overrideを作る。
+3. stage 0 override下でもう一度forwardし、そのときのstage 1 probabilityから共通の
+   stage 1境界数を選ぶ。これにより階層間の依存を保つ。
+4. 主比較は全候補共通の`3.0 bytes/stage0 chunk`、
+   `3.0 stage0 chunks/stage1 chunk`とする。
+5. 低圧縮`2.5 x 2.5`、高圧縮`3.5 x 3.5`でも感度分析する。
+6. 学習時hard maskは`native`補助比較として残す。
+7. stage 0とstage 1を分けて評価する。
 
-共通予算は候補全体の中央値を主条件とし、低・中央・高の3予算で感度分析する。
 先頭境界などモデル実行上必須の位置は全条件で保持する。UTF-8安全位置への強制射影は
-行わない。
+行わない。強制profileは学習時routerの確率順位を比較するための評価条件であり、その
+profileで学習済みであるとは解釈しない。
 
 ## 7. 指標
 

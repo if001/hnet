@@ -1,0 +1,161 @@
+{
+  "version": 1,
+  "description": "Japanese linguistic-boundary proxy. Segmentations are alternative acceptable explanations, not a single gold tokenization.",
+  "budget_profiles": [
+    {"id": "low_compression", "stage0_units_per_chunk": 2.5, "stage1_units_per_chunk": 2.5},
+    {"id": "central", "stage0_units_per_chunk": 3.0, "stage1_units_per_chunk": 3.0},
+    {"id": "high_compression", "stage0_units_per_chunk": 3.5, "stage1_units_per_chunk": 3.5}
+  ],
+  "records": [
+    {
+      "id": "inflection-progressive-01",
+      "category": "inflection",
+      "text": "彼女は冗談を聞いて笑っている。",
+      "focus": {"surface": "笑っている", "occurrence": 0, "acceptable_segmentations": ["笑|っている", "笑って|いる"]},
+      "pair": {"group": "laugh-context", "kind": "dynamic", "variant": "progressive"}
+    },
+    {
+      "id": "inflection-literal-01",
+      "category": "inflection",
+      "text": "「笑っている」という文字列を検索する。",
+      "focus": {"surface": "笑っている", "occurrence": 0, "acceptable_segmentations": ["笑っている"]},
+      "pair": {"group": "laugh-context", "kind": "dynamic", "variant": "literal"}
+    },
+    {
+      "id": "inflection-progressive-02",
+      "category": "inflection",
+      "text": "学生が机で報告書を書いている。",
+      "focus": {"surface": "書いている", "occurrence": 0, "acceptable_segmentations": ["書|いている", "書いて|いる"]},
+      "pair": {"group": "write-control", "kind": "control", "variant": "student"}
+    },
+    {
+      "id": "inflection-progressive-03",
+      "category": "inflection",
+      "text": "彼女は静かな部屋で手紙を書いている。",
+      "focus": {"surface": "書いている", "occurrence": 0, "acceptable_segmentations": ["書|いている", "書いて|いる"]},
+      "pair": {"group": "write-control", "kind": "control", "variant": "letter"}
+    },
+    {
+      "id": "auxiliary-negative-01",
+      "category": "auxiliary",
+      "text": "設定はまだ変更していない。",
+      "focus": {"surface": "変更していない", "occurrence": 0, "acceptable_segmentations": ["変更|していない", "変更して|いない"]}
+    },
+    {
+      "id": "auxiliary-causative-01",
+      "category": "auxiliary",
+      "text": "先生が生徒に文章を書かせる。",
+      "focus": {"surface": "書かせる", "occurrence": 0, "acceptable_segmentations": ["書か|せる", "書|かせる"]}
+    },
+    {
+      "id": "particle-subject-01",
+      "category": "particle",
+      "text": "人が結果を確認した。",
+      "focus": {"surface": "人が結果を", "occurrence": 0, "acceptable_segmentations": ["人|が|結果|を", "人が|結果を"]}
+    },
+    {
+      "id": "particle-topic-01",
+      "category": "particle",
+      "text": "モデルは境界を学習する。",
+      "focus": {"surface": "モデルは境界を", "occurrence": 0, "acceptable_segmentations": ["モデル|は|境界|を", "モデルは|境界を"]}
+    },
+    {
+      "id": "bunsetsu-conditional-01",
+      "category": "bunsetsu",
+      "text": "値が正しければ、そのまま次へ進む。",
+      "focus": {"surface": "値が正しければ、そのまま次へ", "occurrence": 0, "acceptable_segmentations": ["値が|正しければ|、|そのまま|次へ", "値が正しければ|、|そのまま次へ"]}
+    },
+    {
+      "id": "bunsetsu-causal-01",
+      "category": "bunsetsu",
+      "text": "エラーが出たため、設定を見直した。",
+      "focus": {"surface": "エラーが出たため、設定を", "occurrence": 0, "acceptable_segmentations": ["エラーが|出たため|、|設定を", "エラーが出たため|、|設定を"]}
+    },
+    {
+      "id": "compound-nlp-01",
+      "category": "compound",
+      "text": "自然言語処理モデルを追加学習する。",
+      "focus": {"surface": "自然言語処理モデル", "occurrence": 0, "acceptable_segmentations": ["自然言語処理|モデル", "自然言語|処理|モデル"]}
+    },
+    {
+      "id": "compound-boundary-01",
+      "category": "compound",
+      "text": "動的チャンク境界を可視化する。",
+      "focus": {"surface": "動的チャンク境界", "occurrence": 0, "acceptable_segmentations": ["動的|チャンク|境界", "動的チャンク|境界"]}
+    },
+    {
+      "id": "compound-experiment-01",
+      "category": "compound",
+      "text": "境界介入実験結果を保存した。",
+      "focus": {"surface": "境界介入実験結果", "occurrence": 0, "acceptable_segmentations": ["境界介入|実験結果", "境界|介入|実験|結果"]}
+    },
+    {
+      "id": "compound-fragmentation-01",
+      "category": "compound",
+      "text": "分割の結果は人が確認する。",
+      "focus": {"surface": "分割の結果は人が", "occurrence": 0, "acceptable_segmentations": ["分割の|結果は|人が", "分割|の|結果|は|人|が"]}
+    },
+    {
+      "id": "punctuation-comma-01",
+      "category": "punctuation",
+      "text": "学習が終わったら、重みを保存する。",
+      "focus": {"surface": "終わったら、重みを", "occurrence": 0, "acceptable_segmentations": ["終わったら|、|重みを", "終わったら、|重みを"]}
+    },
+    {
+      "id": "punctuation-quote-01",
+      "category": "punctuation",
+      "text": "画面に「処理が完了しました」と表示された。",
+      "focus": {"surface": "「処理が完了しました」と", "occurrence": 0, "acceptable_segmentations": ["「|処理が完了しました|」|と", "「処理が完了しました」|と"]}
+    },
+    {
+      "id": "proper-noun-01",
+      "category": "proper_noun",
+      "text": "東京都千代田区で会議を開く。",
+      "focus": {"surface": "東京都千代田区", "occurrence": 0, "acceptable_segmentations": ["東京都|千代田区", "東京|都|千代田|区"]}
+    },
+    {
+      "id": "number-unit-01",
+      "category": "number_unit",
+      "text": "500ミリ秒後に再試行する。",
+      "focus": {"surface": "500ミリ秒後", "occurrence": 0, "acceptable_segmentations": ["500|ミリ秒|後", "500ミリ秒|後"]}
+    },
+    {
+      "id": "identifier-01",
+      "category": "identifier",
+      "text": "validation_lossをstep=110で確認する。",
+      "focus": {"surface": "validation_lossをstep=110", "occurrence": 0, "acceptable_segmentations": ["validation_loss|を|step|=|110", "validation_lossを|step=110"]}
+    },
+    {
+      "id": "path-01",
+      "category": "identifier",
+      "text": "/content/drive/MyDrive/hnet_agentの結果を読む。",
+      "focus": {"surface": "/content/drive/MyDrive/hnet_agent", "occurrence": 0, "acceptable_segmentations": ["/|content|/|drive|/|MyDrive|/|hnet_agent", "/content/drive/MyDrive/hnet_agent"]}
+    },
+    {
+      "id": "json-01",
+      "category": "structured",
+      "text": "応答は{\"query\":\"東京の天気\"}だった。",
+      "focus": {"surface": "{\"query\":\"東京の天気\"}", "occurrence": 0, "acceptable_segmentations": ["{|\"query\"|:|\"東京の天気\"|}", "{\"query\":|\"東京の天気\"}"]}
+    },
+    {
+      "id": "code-call-01",
+      "category": "structured",
+      "text": "torch.allclose(a, b)で同値を確認する。",
+      "focus": {"surface": "torch.allclose(a, b)", "occurrence": 0, "acceptable_segmentations": ["torch|.|allclose|(|a|,| |b|)", "torch.allclose|(a, b)"]}
+    },
+    {
+      "id": "control-boundary-01",
+      "category": "context_control",
+      "text": "短い実験で動的チャンク境界を確認した。",
+      "focus": {"surface": "動的チャンク境界", "occurrence": 0, "acceptable_segmentations": ["動的|チャンク|境界", "動的チャンク|境界"]},
+      "pair": {"group": "boundary-control", "kind": "control", "variant": "short"}
+    },
+    {
+      "id": "control-boundary-02",
+      "category": "context_control",
+      "text": "長い学習の後でも動的チャンク境界を詳しく確認した。",
+      "focus": {"surface": "動的チャンク境界", "occurrence": 0, "acceptable_segmentations": ["動的|チャンク|境界", "動的チャンク|境界"]},
+      "pair": {"group": "boundary-control", "kind": "control", "variant": "long"}
+    }
+  ]
+}

@@ -578,6 +578,7 @@ def main() -> None:
         "torch_version": torch.__version__,
         "cuda_device": torch.cuda.get_device_name(0) if torch.cuda.is_available() else None,
         "learned_boundary_identity_check": "passed",
+        "bpb_normalization": "sum NLL / raw UTF-8 bytes / ln(2)",
         "compact": args.compact,
     }
     (args.output_dir / "manifest.json").write_text(

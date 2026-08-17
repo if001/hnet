@@ -233,6 +233,8 @@ def main() -> None:
                 "task_count": len(tasks),
                 "max_new_tokens": args.max_new_tokens,
                 "decode": "greedy",
+                "prompt_format": "Qwen3 chat envelope with /no_think and <tools>",
+                "accepted_tool_name_keys": ["name", "tool"],
             },
             ensure_ascii=False,
             indent=2,

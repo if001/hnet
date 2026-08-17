@@ -23,6 +23,12 @@ Phase 2 の T26、K1T1、128k tokenizer baseline 各2 seedと、共通SFT後の
 5. 共通SFT後に、単一tool選択とJSON引数生成の固定Level A proxyをgreedy decodeで
    評価する。JSON妥当率、tool accuracy、引数exact matchを記録する。
 
+すべてのBPBはnegative log likelihoodの総和を入力文字列のraw UTF-8 byte数と
+`ln(2)`で割る。境界介入のdelta BPBも同じ定義を使う。agent proxyのpromptはSFTで
+使用したQwen3 chat envelope、`/no_think`、`<tools>...</tools>`へ合わせ、tool callは
+SFTの標準である`{"name": ..., "arguments": ...}`を主形式として採点する。旧データとの
+互換性のため`tool` keyも受理する。
+
 ## 事前判定規則
 
 - Phase 1で固定した実用同等幅は`0.009626833718514239 BPB`とする。
@@ -43,4 +49,3 @@ Phase 2 の T26、K1T1、128k tokenizer baseline 各2 seedと、共通SFT後の
   category別比較は最終checkpointの固定probeで補う。
 - SFT seedは42に固定されており、pretraining seedのみ2つである。Phase 5で要求する
   SFT 3 seed分散の代替にはならない。
-

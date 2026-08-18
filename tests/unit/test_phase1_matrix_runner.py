@@ -1,6 +1,6 @@
 import argparse
 
-from scripts.run_phase1_matrix import parse_run
+from scripts.run_phase1_matrix import CONDITIONS, parse_run
 
 
 def test_parse_run_accepts_phase1_candidates() -> None:
@@ -17,3 +17,11 @@ def test_parse_run_rejects_unknown_candidates() -> None:
         assert "unknown main network" in str(exc)
     else:
         raise AssertionError("unknown candidates must be rejected")
+
+
+def test_k3t1_uses_calibrated_ratio_weight() -> None:
+    assert CONDITIONS["k3t1"] == {
+        "ratio_weight": 0.08,
+        "inner": 3.0,
+        "outer": 3.0,
+    }

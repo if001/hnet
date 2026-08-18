@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Any
 
 import torch
@@ -23,6 +24,7 @@ class SFTTrainConfig:
     pretrained_model_path: str
     output_dir: str = "artifacts/hnet_sft"
     chat_tokenizer_path: str = "Qwen/Qwen3-0.6B"
+    model_tokenizer_path: str | None = None
     mix_config_path: str | None = None
 
     seq_len: int = 512
@@ -68,11 +70,13 @@ class HNetSFTTrainer(Trainer):
         *args: Any,
         ratio_weight: float,
         compression_ratios: list[float],
+        use_utf8_hard_boundaries: bool,
         **kwargs: Any,
     ) -> None:
         super().__init__(*args, **kwargs)
         self.ratio_weight = ratio_weight
         self.compression_ratios = compression_ratios
+        self.use_utf8_hard_boundaries = use_utf8_hard_boundaries
 
     def compute_loss(
         self,
@@ -86,7 +90,17 @@ class HNetSFTTrainer(Trainer):
         labels = inputs["labels"]
         mask = inputs.get("mask")
 
-        outputs = model(input_ids=input_ids, mask=mask)
+        continuation_mask = (
+            (input_ids >= 0x80) & (input_ids <= 0xBF)
+            if self.use_utf8_hard_boundaries
+            else torch.zeros_like(input_ids, dtype=torch.bool)
+        )
+        outputs = model(
+            input_ids=input_ids,
+            mask=mask,
+            continuation_mask=continuation_mask,
+            continuation_hard=self.use_utf8_hard_boundaries,
+        )
         vocab_size = outputs.logits.shape[-1]
         ce_loss = F.cross_entropy(
             outputs.logits.view(-1, vocab_size),
@@ -135,6 +149,18 @@ class HNetSFTTrainer(Trainer):
 
         return self.optimizer
 
+    def _save(
+        self,
+        output_dir: str | None = None,
+        state_dict: dict[str, torch.Tensor] | None = None,
+    ) -> None:
+        """Save checkpoints with torch.save so tied H-Net weights stay shared."""
+        checkpoint_dir = Path(output_dir or self.args.output_dir)
+        checkpoint_dir.mkdir(parents=True, exist_ok=True)
+        model_state = self.model.state_dict() if state_dict is None else state_dict
+        torch.save(model_state, checkpoint_dir / "pytorch_model.bin")
+        torch.save(self.args, checkpoint_dir / "training_args.bin")
+
 
 def build_training_arguments(
     config: SFTTrainConfig, *, max_steps: int | None = None
@@ -160,8 +186,7 @@ def build_training_arguments(
         dataloader_persistent_workers=config.num_workers > 0,
         dataloader_pin_memory=torch.cuda.is_available(),
         remove_unused_columns=False,
-        # report_to=[],
-        report_to="wandb",
+        report_to=[],
         seed=config.seed,
         bf16=torch.cuda.is_available() and torch.cuda.is_bf16_supported(),
         fp16=False,

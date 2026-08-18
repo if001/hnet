@@ -332,6 +332,12 @@ def bootstrap_interval(values: list[float], seed: int = 42, samples: int = 2000)
     return estimates[int(0.025 * (samples - 1))], estimates[int(0.975 * (samples - 1))]
 
 
+def bits_per_raw_byte(token_loss: torch.Tensor, raw_bytes: int) -> float:
+    if raw_bytes <= 0:
+        raise ValueError("raw_bytes must be positive")
+    return float(token_loss.sum().item()) / (raw_bytes * math.log(2.0))
+
+
 def write_csv(path: Path, rows: list[dict[str, Any]]) -> None:
     if not rows:
         return
@@ -363,6 +369,11 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--dtype", choices=["auto", "bf16", "fp16", "fp32"], default="auto")
     parser.add_argument("--utf8-hard", action="store_true")
     parser.add_argument("--max-records", type=int)
+    parser.add_argument(
+        "--compact",
+        action="store_true",
+        help="Skip per-probe chunk and next-byte files while retaining aggregate artifacts.",
+    )
     return parser.parse_args()
 
 
@@ -376,8 +387,9 @@ def main() -> None:
     args.output_dir.mkdir(parents=True, exist_ok=True)
     chunk_dir = args.output_dir / "validation_chunks"
     prediction_dir = args.output_dir / "probe_predictions"
-    chunk_dir.mkdir(exist_ok=True)
-    prediction_dir.mkdir(exist_ok=True)
+    if not args.compact:
+        chunk_dir.mkdir(exist_ok=True)
+        prediction_dir.mkdir(exist_ok=True)
 
     model = load_from_pretrained(
         str(args.model_path), str(args.config_path), requested_dtype=args.dtype
@@ -449,15 +461,18 @@ def main() -> None:
                     result.logits[0].float(), labels[0], reduction="none"
                 )
                 ce = float(token_loss.mean().item())
-                bpb = ce / math.log(2.0)
+                raw_bytes = len(record.text.encode("utf-8"))
+                bpb = bits_per_raw_byte(token_loss, raw_bytes)
                 if mode == "learned":
                     reference_bpb = bpb
                 if reference_bpb is None:
-                    reference_bpb = float(
+                    reference_bpb = bits_per_raw_byte(
                         F.cross_entropy(
-                            learned_result.logits[0].float(), labels[0]
-                        ).item()
-                        / math.log(2.0)
+                            learned_result.logits[0].float(),
+                            labels[0],
+                            reduction="none",
+                        ),
+                        raw_bytes,
                     )
                 evaluation_rows.append(
                     {
@@ -465,7 +480,7 @@ def main() -> None:
                         "category": record.category,
                         "mode": mode,
                         "random_seed": run_seed,
-                        "input_bytes": len(record.text.encode("utf-8")),
+                        "input_bytes": raw_bytes,
                         "ce_loss": ce,
                         "bpb": bpb,
                         "delta_bpb": bpb - reference_bpb,
@@ -484,15 +499,18 @@ def main() -> None:
                 chunk_name = f"{record.probe_id}_{mode}"
                 if run_seed is not None:
                     chunk_name += f"_s{run_seed}"
-                (chunk_dir / f"{chunk_name}.txt").write_text(
-                    record.text + "\n" + "\n".join(rendered) + "\n",
-                    encoding="utf-8",
-                )
-                top_ids = torch.topk(result.logits[0, -1].float(), k=5).indices.tolist()
-                (prediction_dir / f"{chunk_name}.json").write_text(
-                    json.dumps({"next_byte_top5": top_ids}, indent=2) + "\n",
-                    encoding="utf-8",
-                )
+                if not args.compact:
+                    (chunk_dir / f"{chunk_name}.txt").write_text(
+                        record.text + "\n" + "\n".join(rendered) + "\n",
+                        encoding="utf-8",
+                    )
+                    top_ids = torch.topk(
+                        result.logits[0, -1].float(), k=5
+                    ).indices.tolist()
+                    (prediction_dir / f"{chunk_name}.json").write_text(
+                        json.dumps({"next_byte_top5": top_ids}, indent=2) + "\n",
+                        encoding="utf-8",
+                    )
                 for stage, stage_positions in enumerate(learned_boundary_positions):
                     for boundary_position in stage_positions:
                         for relative in range(-4, 9):
@@ -560,6 +578,8 @@ def main() -> None:
         "torch_version": torch.__version__,
         "cuda_device": torch.cuda.get_device_name(0) if torch.cuda.is_available() else None,
         "learned_boundary_identity_check": "passed",
+        "bpb_normalization": "sum NLL / raw UTF-8 bytes / ln(2)",
+        "compact": args.compact,
     }
     (args.output_dir / "manifest.json").write_text(
         json.dumps(manifest, ensure_ascii=False, indent=2) + "\n", encoding="utf-8"

@@ -61,6 +61,15 @@ def parse_args() -> SFTTrainConfig:
         default=None,
         help="Optional JSON path to override SFT dataset take counts / seed / shuffle buffer.",
     )
+    parser.add_argument(
+        "--model-tokenizer-path",
+        type=str,
+        default=None,
+        help=(
+            "Optional tokenizer.json for a tokenizer baseline. If omitted, "
+            "the rendered chat text is encoded as UTF-8 bytes."
+        ),
+    )
 
     parser.add_argument("--seq-len", type=int, default=512)
     parser.add_argument(
@@ -115,6 +124,7 @@ def parse_args() -> SFTTrainConfig:
         pretrained_model_path=args.pretrained_model_path,
         output_dir=args.output_dir,
         chat_tokenizer_path=args.chat_tokenizer_path,
+        model_tokenizer_path=args.model_tokenizer_path,
         mix_config_path=args.mix_config_path,
         seq_len=args.seq_len,
         packing=args.packing,
@@ -157,6 +167,7 @@ def train(config: SFTTrainConfig) -> None:
         shuffle_buffer_size=config.shuffle_buffer_size,
         seed=config.seed,
         chat_tokenizer_path=config.chat_tokenizer_path,
+        model_tokenizer_path=config.model_tokenizer_path,
         mix_config_path=config.mix_config_path,
     )
 
@@ -171,6 +182,7 @@ def train(config: SFTTrainConfig) -> None:
             shuffle_buffer_size=config.shuffle_buffer_size,
             seed=config.seed,
             chat_tokenizer_path=config.chat_tokenizer_path,
+            model_tokenizer_path=config.model_tokenizer_path,
             mix_config_path=config.mix_config_path,
         )
         effective_max_steps = estimate.optimizer_steps
@@ -188,6 +200,7 @@ def train(config: SFTTrainConfig) -> None:
         train_dataset=train_dataset,
         ratio_weight=config.train_ratio_weight,
         compression_ratios=config.compression_ratios or [4.0],
+        use_utf8_hard_boundaries=config.model_tokenizer_path is None,
     )
 
     trainer.train()

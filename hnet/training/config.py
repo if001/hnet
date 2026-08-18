@@ -28,6 +28,7 @@ class TrainingConfig:
     batch_size: int = 2
     grad_accum_steps: int = 8
     max_steps: int | None = None
+    max_train_bytes: int | None = None
     lr_schedule_steps: int | None = None
     learning_rate: float = 3e-4
     min_learning_rate: float = 3e-5
@@ -36,7 +37,9 @@ class TrainingConfig:
     grad_clip_norm: float = 1.0
     log_every: int = 10
     save_every: int = 100
+    save_every_bytes: int | None = None
     validation_every: int = 100
+    validation_every_bytes: int | None = None
     validation_max_batches: int = 20
     validation_split_ratio: float = 0.1
     train_ratio_weight: float = 0.02

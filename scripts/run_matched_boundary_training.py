@@ -13,6 +13,7 @@ if str(REPOSITORY_ROOT) not in sys.path:
 
 from scripts.run_boundary_calibration import (
     ARCHIVE_PREFIX,
+    EXPECTED_BRANCH,
     MODEL_CONFIGS,
     PROBES,
     archive_run,
@@ -51,11 +52,11 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--ratio-weight", type=float, required=True)
     parser.add_argument("--inner-compression-target", type=float, required=True)
     parser.add_argument("--outer-compression-target", type=float, required=True)
-    parser.add_argument("--seed", type=int, choices=[42, 43], default=42)
+    parser.add_argument("--seed", type=int, choices=[42, 43, 44], default=42)
     parser.add_argument("--packed-data-dir", type=Path, required=True)
     parser.add_argument("--packed-validation-data-dir", type=Path, required=True)
     parser.add_argument(
-        "--work-root", type=Path, default=Path("/content/hnet_agent_kda_diff_work")
+        "--work-root", type=Path, default=Path("/content/hnet_agent_200m_main_work")
     )
     parser.add_argument("--archive-root", type=Path, default=ARCHIVE_PREFIX / "runs")
     parser.add_argument("--dataset-manifest", type=Path)
@@ -70,8 +71,8 @@ def main() -> None:
     archive_root = args.archive_root.resolve()
     if not archive_root.is_relative_to(ARCHIVE_PREFIX):
         raise ValueError(f"Archive root must be under {ARCHIVE_PREFIX}")
-    if git_output("branch", "--show-current") != "kimi_attn_diff":
-        raise RuntimeError("Training must run on kimi_attn_diff")
+    if git_output("branch", "--show-current") != EXPECTED_BRANCH:
+        raise RuntimeError(f"Training must run on {EXPECTED_BRANCH}")
 
     commit = git_output("rev-parse", "HEAD")
     name = run_name(
@@ -178,7 +179,7 @@ def main() -> None:
     manifest = {
         "run_name": name,
         "commit": commit,
-        "branch": "kimi_attn_diff",
+        "branch": EXPECTED_BRANCH,
         "git_dirty": bool(git_output("status", "--porcelain")),
         "model_config": MODEL_CONFIGS[args.main],
         "model_config_sha256": sha256_file(Path(MODEL_CONFIGS[args.main])),

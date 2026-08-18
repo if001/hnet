@@ -45,6 +45,7 @@ class TrainingMetricsLogger:
         "elapsed_seconds",
         "step_seconds",
         "input_bytes",
+        "cumulative_input_bytes",
         "input_bytes_per_second",
         "cuda_peak_allocated_mb",
     ]
@@ -92,6 +93,7 @@ class TrainingMetricsLogger:
         input_bytes: int,
         input_bytes_per_second: float,
         cuda_peak_allocated_mb: float,
+        cumulative_input_bytes: int = 0,
     ) -> None:
         with self.output_path.open("a", encoding="utf-8", newline="") as handle:
             writer = csv.DictWriter(handle, fieldnames=self.fieldnames)
@@ -106,6 +108,7 @@ class TrainingMetricsLogger:
                     "elapsed_seconds": elapsed_seconds,
                     "step_seconds": step_seconds,
                     "input_bytes": input_bytes,
+                    "cumulative_input_bytes": cumulative_input_bytes,
                     "input_bytes_per_second": input_bytes_per_second,
                     "cuda_peak_allocated_mb": cuda_peak_allocated_mb,
                 }
@@ -115,6 +118,7 @@ class TrainingMetricsLogger:
 class ValidationMetricsLogger:
     fieldnames = [
         "step",
+        "cumulative_input_bytes",
         "validation_batches",
         "validation_ce_loss",
         "validation_bpb",
@@ -141,13 +145,39 @@ class ValidationMetricsLogger:
 
     def _initialize_file(self) -> None:
         if self.append and self.output_path.exists():
+            with self.output_path.open(encoding="utf-8", newline="") as handle:
+                reader = csv.DictReader(handle)
+                existing_fieldnames = reader.fieldnames or []
+                existing_rows = list(reader)
+            if existing_fieldnames == self.fieldnames:
+                return
+            if not set(existing_fieldnames).issubset(self.fieldnames):
+                raise ValueError(
+                    "Existing validation metrics columns are incompatible: "
+                    f"{existing_fieldnames}"
+                )
+            with self.output_path.open(
+                "w", encoding="utf-8", newline=""
+            ) as handle:
+                writer = csv.DictWriter(handle, fieldnames=self.fieldnames)
+                writer.writeheader()
+                writer.writerows(existing_rows)
             return
         with self.output_path.open("w", encoding="utf-8", newline="") as handle:
             writer = csv.DictWriter(handle, fieldnames=self.fieldnames)
             writer.writeheader()
 
-    def log(self, step: int, metrics: dict[str, Any]) -> None:
-        payload = {"step": step, **metrics}
+    def log(
+        self,
+        step: int,
+        metrics: dict[str, Any],
+        cumulative_input_bytes: int = 0,
+    ) -> None:
+        payload = {
+            "step": step,
+            "cumulative_input_bytes": cumulative_input_bytes,
+            **metrics,
+        }
         with self.output_path.open("a", encoding="utf-8", newline="") as handle:
             writer = csv.DictWriter(handle, fieldnames=self.fieldnames)
             writer.writerow(payload)
@@ -351,6 +381,13 @@ def wsd_schedule(
     current_value = 1.0 / math.sqrt(1.0 + decay_progress * (inverse_sqrt_span - 1.0))
     normalized = (current_value - end_value) / max(1e-8, (1.0 - end_value))
     return min_lr + (max_lr - min_lr) * normalized
+
+
+def crossed_interval(previous: int, current: int, interval: int | None) -> bool:
+    """Return whether a positive cumulative interval was crossed."""
+    if interval is None or interval <= 0 or current <= previous:
+        return False
+    return previous // interval < current // interval
 
 
 def save_training_config(training_config: TrainingConfig, output_path: Path) -> Path:
@@ -595,6 +632,7 @@ def evaluate_validation(
 
     ce_sum = 0.0
     token_count = 0
+    raw_byte_count = 0
     boundary_positions_sample = ""
     stage0_mid_utf8_boundary_fraction_values: list[float] = []
 
@@ -611,7 +649,18 @@ def evaluate_validation(
         input_ids = batch["input_ids"].to(device, non_blocking=True)
         labels = batch["labels"].to(device, non_blocking=True)
         mask = batch["mask"].to(device, non_blocking=True)
-        continuation_mask = build_utf8_continuation_mask(input_ids)
+        target_byte_lengths = batch.get("target_byte_lengths")
+        if target_byte_lengths is None:
+            target_byte_lengths = torch.ones_like(labels)
+        else:
+            target_byte_lengths = target_byte_lengths.to(device, non_blocking=True)
+        is_byte_level = batch.get("is_byte_level")
+        use_utf8_rules = is_byte_level is None or bool(is_byte_level.all())
+        continuation_mask = (
+            build_utf8_continuation_mask(input_ids)
+            if use_utf8_rules
+            else torch.zeros_like(input_ids, dtype=torch.bool)
+        )
 
         with torch.autocast(
             device_type=device.type,
@@ -628,14 +677,17 @@ def evaluate_validation(
                 continuation_hard=training_config.byte_boundary_constraint
                 == "utf8-hard",
             )
-            ce_loss = F.cross_entropy(
+            token_losses = F.cross_entropy(
                 output.logits.reshape(-1, output.logits.shape[-1]),
                 labels.reshape(-1),
+                reduction="none",
             )
 
-        tokens_in_batch = int(labels.numel())
-        ce_sum += float(ce_loss.detach()) * tokens_in_batch
-        token_count += tokens_in_batch
+        byte_lengths_flat = target_byte_lengths.reshape(-1)
+        text_token_mask = byte_lengths_flat > 0
+        ce_sum += float(token_losses[text_token_mask].sum().detach())
+        token_count += int(text_token_mask.sum())
+        raw_byte_count += int(byte_lengths_flat[text_token_mask].sum())
 
         if not boundary_positions_sample and output.bpred_output:
             boundary_positions_sample = _format_boundary_positions(
@@ -692,11 +744,11 @@ def evaluate_validation(
                     mid_utf8_boundary_fraction
                 )
 
-    if processed_batches == 0 or token_count == 0:
+    if processed_batches == 0 or token_count == 0 or raw_byte_count == 0:
         return None
 
     validation_ce = ce_sum / token_count
-    validation_bpb = validation_ce / math.log(2.0)
+    validation_bpb = ce_sum / (raw_byte_count * math.log(2.0))
 
     selected_fraction_by_stage: list[float] = []
     target_ratio_gap_by_stage: list[float] = []
@@ -811,6 +863,7 @@ def train(training_config: TrainingConfig) -> None:
     resume_checkpoint = None
     resumed_step = 0
     resumed_data_micro_batches = 0
+    resumed_input_bytes = 0
     if training_config.resume_from_checkpoint is not None:
         resume_checkpoint = load_checkpoint_file(
             training_config.resume_from_checkpoint, device
@@ -836,6 +889,10 @@ def train(training_config: TrainingConfig) -> None:
                 logger.info(
                     "resumed_data_micro_batches=%d", resumed_data_micro_batches
                 )
+            raw_input_bytes = data_state.get("cumulative_input_bytes")
+            if isinstance(raw_input_bytes, int) and raw_input_bytes >= 0:
+                resumed_input_bytes = raw_input_bytes
+                logger.info("resumed_input_bytes=%d", resumed_input_bytes)
     freeze_summary = apply_freeze_mode(model, training_config.freeze_mode)
     logger.info(
         "freeze_mode=%s trainable_parameters=%d frozen_parameters=%d",
@@ -1031,6 +1088,10 @@ def train(training_config: TrainingConfig) -> None:
         )
 
     target_steps = training_config.max_steps
+    if training_config.max_train_bytes is not None:
+        if training_config.max_train_bytes <= 0:
+            raise ValueError("max_train_bytes must be positive")
+        logger.info("target_train_bytes=%d", training_config.max_train_bytes)
     if target_steps is None:
         logger.info("epoch_count_mode=streaming_no_prescan")
         if estimated_optimizer_steps is not None:
@@ -1102,10 +1163,15 @@ def train(training_config: TrainingConfig) -> None:
     last_saved_step = 0
     completed_steps = resumed_step
     data_micro_batches_seen = resumed_data_micro_batches
+    cumulative_input_bytes = resumed_input_bytes
     packed_epoch_total_micro_batches = len(dataloader) if use_packed_data else None
 
     while (
-        training_config.max_steps is None or completed_steps < training_config.max_steps
+        (training_config.max_steps is None or completed_steps < training_config.max_steps)
+        and (
+            training_config.max_train_bytes is None
+            or cumulative_input_bytes < training_config.max_train_bytes
+        )
     ):
         step_started_at = time.perf_counter()
         optimizer.zero_grad(set_to_none=True)
@@ -1115,7 +1181,22 @@ def train(training_config: TrainingConfig) -> None:
         micro_batches_processed = 0
         input_bytes_processed = 0
 
-        if lr_total_steps is None:
+        if training_config.max_train_bytes is not None and lr_total_steps is not None:
+            byte_progress = min(
+                cumulative_input_bytes / float(training_config.max_train_bytes),
+                1.0,
+            )
+            schedule_step = min(
+                int(byte_progress * lr_total_steps),
+                max(0, lr_total_steps - 1),
+            )
+            learning_rate = wsd_schedule(
+                step=schedule_step,
+                total_steps=lr_total_steps,
+                max_lr=training_config.learning_rate,
+                min_lr=training_config.min_learning_rate,
+            )
+        elif lr_total_steps is None:
             if completed_steps < training_config.warmup_steps:
                 learning_rate = (
                     training_config.learning_rate
@@ -1141,10 +1222,20 @@ def train(training_config: TrainingConfig) -> None:
             micro_batches_processed += 1
             data_micro_batches_seen += 1
             input_ids = batch["input_ids"].to(device, non_blocking=True)
-            input_bytes_processed += int(input_ids.numel())
             labels = batch["labels"].to(device, non_blocking=True)
             mask = batch["mask"].to(device, non_blocking=True)
-            continuation_mask = build_utf8_continuation_mask(input_ids)
+            target_byte_lengths = batch.get("target_byte_lengths")
+            if target_byte_lengths is None:
+                input_bytes_processed += int(input_ids.numel())
+            else:
+                input_bytes_processed += int(target_byte_lengths.sum())
+            is_byte_level = batch.get("is_byte_level")
+            use_utf8_rules = is_byte_level is None or bool(is_byte_level.all())
+            continuation_mask = (
+                build_utf8_continuation_mask(input_ids)
+                if use_utf8_rules
+                else torch.zeros_like(input_ids, dtype=torch.bool)
+            )
             continuation_bias = (
                 training_config.byte_boundary_constraint_bias
                 if training_config.byte_boundary_constraint == "utf8-soft"
@@ -1245,6 +1336,8 @@ def train(training_config: TrainingConfig) -> None:
             else float("nan")
         )
         completed_steps += 1
+        previous_input_bytes = cumulative_input_bytes
+        cumulative_input_bytes += input_bytes_processed
         average_ce = ce_loss_value / micro_batches_processed
         average_ratio = ratio_loss_value / micro_batches_processed
         average_byte_boundary = byte_boundary_loss_value / micro_batches_processed
@@ -1263,6 +1356,7 @@ def train(training_config: TrainingConfig) -> None:
             elapsed_seconds=elapsed_seconds,
             step_seconds=step_seconds,
             input_bytes=input_bytes_processed,
+            cumulative_input_bytes=cumulative_input_bytes,
             input_bytes_per_second=input_bytes_per_second,
             cuda_peak_allocated_mb=cuda_peak_allocated_mb,
         )
@@ -1339,10 +1433,15 @@ def train(training_config: TrainingConfig) -> None:
                     optimizer_text,
                 )
 
-        if (
+        validation_due = (
             training_config.validation_every > 0
             and completed_steps % training_config.validation_every == 0
-        ):
+        ) or crossed_interval(
+            previous_input_bytes,
+            cumulative_input_bytes,
+            training_config.validation_every_bytes,
+        )
+        if validation_due:
             if device.type == "cuda":
                 logger.info(
                     "event=validation_start step=%d %s",
@@ -1369,6 +1468,7 @@ def train(training_config: TrainingConfig) -> None:
                 validation_metrics_logger.log(
                     step=completed_steps,
                     metrics=validation_metrics,
+                    cumulative_input_bytes=cumulative_input_bytes,
                 )
                 logger.info(
                     "validation step=%d ce=%.4f bpb=%.4f comp(L1/L0)=%.3f comp(L2/L1)=%.3f comp(L2/L0)=%.3f sf0=%.4f sf1=%.4f gap0=%.4f gap1=%.4f mid_utf8=%.4f",
@@ -1401,7 +1501,15 @@ def train(training_config: TrainingConfig) -> None:
             if chunk_report_path is not None:
                 logger.info("saved_validation_chunks=%s", chunk_report_path)
 
-        if completed_steps % training_config.save_every == 0:
+        save_due = (
+            training_config.save_every > 0
+            and completed_steps % training_config.save_every == 0
+        ) or crossed_interval(
+            previous_input_bytes,
+            cumulative_input_bytes,
+            training_config.save_every_bytes,
+        )
+        if save_due:
             if device.type == "cuda":
                 logger.info(
                     "event=save_start step=%d %s",
@@ -1415,6 +1523,7 @@ def train(training_config: TrainingConfig) -> None:
                 output_dir=output_dir,
                 data_state={
                     "micro_batches_seen": data_micro_batches_seen,
+                    "cumulative_input_bytes": cumulative_input_bytes,
                     "epoch_micro_batches_total": int(
                         packed_epoch_total_micro_batches
                         if packed_epoch_total_micro_batches is not None
@@ -1441,6 +1550,7 @@ def train(training_config: TrainingConfig) -> None:
             output_dir=output_dir,
             data_state={
                 "micro_batches_seen": data_micro_batches_seen,
+                "cumulative_input_bytes": cumulative_input_bytes,
                 "epoch_micro_batches_total": int(
                     packed_epoch_total_micro_batches
                     if packed_epoch_total_micro_batches is not None

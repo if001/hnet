@@ -28,6 +28,7 @@ def test_training_metrics_logger_writes_performance_fields(tmp_path) -> None:
     assert rows[0]["elapsed_seconds"] == "12.0"
     assert rows[0]["step_seconds"] == "10.0"
     assert rows[0]["input_bytes"] == "1048576"
+    assert rows[0]["cumulative_input_bytes"] == "0"
     assert rows[0]["input_bytes_per_second"] == "104857.6"
     assert rows[0]["cuda_peak_allocated_mb"] == "24000.0"
 
@@ -49,3 +50,4 @@ def test_training_metrics_logger_migrates_old_header_on_resume(tmp_path) -> None
     assert rows[0]["step"] == "4"
     assert rows[0]["elapsed_seconds"] == ""
     assert rows[0]["input_bytes_per_second"] == ""
+    assert rows[0]["cumulative_input_bytes"] == ""

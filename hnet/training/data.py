@@ -132,6 +132,7 @@ class PackedShard:
     dataset_name: str
     bin_path: Path
     token_count: int
+    dtype: str = "uint8"
 
 
 def _load_shards_from_mix_manifest(packed_dir: str | Path) -> list[PackedShard]:
@@ -152,6 +153,9 @@ def _load_shards_from_mix_manifest(packed_dir: str | Path) -> list[PackedShard]:
         manifest_path = base / manifest_rel
         source_manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
         source_dir = manifest_path.parent
+        dtype = str(source_manifest.get("dtype", "uint8"))
+        if dtype not in {"uint8", "uint16", "uint32"}:
+            raise ValueError(f"Unsupported packed token dtype: {dtype}")
         source_shards = source_manifest.get("shards", [])
         if not isinstance(source_shards, list):
             continue
@@ -168,6 +172,7 @@ def _load_shards_from_mix_manifest(packed_dir: str | Path) -> list[PackedShard]:
                     dataset_name=dataset_name,
                     bin_path=bin_path,
                     token_count=int(token_count),
+                    dtype=dtype,
                 )
             )
     return shards
@@ -196,6 +201,15 @@ class PackedMixByteDataset(torch.utils.data.Dataset):
         self.start_micro_batch = max(0, int(start_micro_batch))
         self._mask = torch.ones(self.seq_len, dtype=torch.bool)
 
+        mix = load_mix_manifest(self.packed_dir)
+        raw_byte_lengths = mix.get("token_byte_lengths")
+        if isinstance(raw_byte_lengths, list):
+            self._token_byte_lengths = np.asarray(raw_byte_lengths, dtype=np.int64)
+            self.is_byte_level = bool(mix.get("is_byte_level", False))
+        else:
+            self._token_byte_lengths = np.ones(256, dtype=np.int64)
+            self.is_byte_level = True
+
         all_shards = list_packed_shards(self.packed_dir)
         if shard_indices is not None:
             self.shards = [
@@ -205,13 +219,17 @@ class PackedMixByteDataset(torch.utils.data.Dataset):
         else:
             self.shards = all_shards
             self._has_shard_subset = False
+        dtypes = {shard.dtype for shard in self.shards}
+        if len(dtypes) > 1:
+            raise ValueError(f"Packed shards use mixed token dtypes: {sorted(dtypes)}")
         self._chunk_counts = np.asarray(
             [int(max(0, shard.token_count // self.stride)) for shard in self.shards],
             dtype=np.int64,
         )
         self.total_chunks = int(self._chunk_counts.sum())
         self._shard_memmaps: list[np.memmap] = [
-            np.memmap(shard.bin_path, mode="r", dtype=np.uint8) for shard in self.shards
+            np.memmap(shard.bin_path, mode="r", dtype=np.dtype(shard.dtype))
+            for shard in self.shards
         ]
         self._sample_shard_ids, self._sample_chunk_offsets, self._shuffle_index = (
             self._build_or_load_indices()
@@ -285,11 +303,21 @@ class PackedMixByteDataset(torch.utils.data.Dataset):
         end = start + self.stride
         mm = self._shard_memmaps[shard_idx]
         chunk = np.asarray(mm[start:end], dtype=np.int64)
+        targets = chunk[1:]
+        if targets.size and int(targets.max()) >= self._token_byte_lengths.shape[0]:
+            raise ValueError(
+                "Packed token id exceeds token_byte_lengths lookup: "
+                f"max_id={int(targets.max())} lookup={self._token_byte_lengths.shape[0]}"
+            )
 
         input_ids = torch.from_numpy(chunk[:-1].copy()).long()
-        labels = torch.from_numpy(chunk[1:].copy()).long()
+        labels = torch.from_numpy(targets.copy()).long()
         return {
             "input_ids": input_ids,
             "labels": labels,
             "mask": self._mask,
+            "target_byte_lengths": torch.from_numpy(
+                self._token_byte_lengths[targets].copy()
+            ).long(),
+            "is_byte_level": torch.tensor(self.is_byte_level, dtype=torch.bool),
         }

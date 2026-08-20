@@ -12,6 +12,7 @@ class FocusAnnotation:
     surface: str
     occurrence: int
     acceptable_segmentations: tuple[str, ...]
+    protected_substrings: tuple[str, ...] = ()
 
 
 def segmentation_byte_offsets(segmentation: str, surface: str) -> set[int]:
@@ -115,12 +116,70 @@ def boundary_budget(sequence_length: int, units_per_chunk: float) -> int:
     return min(sequence_length, max(1, math.ceil(sequence_length / units_per_chunk)))
 
 
-def _runs_of_short_fragments(
+def protected_byte_ranges(annotation: FocusAnnotation) -> list[tuple[int, int]]:
+    """Return byte ranges whose internal boundaries fracture protected lexemes."""
+    ranges: set[tuple[int, int]] = set()
+    for protected in annotation.protected_substrings:
+        if not protected:
+            raise ValueError("protected substring cannot be empty")
+        start_character = 0
+        found_any = False
+        while True:
+            found = annotation.surface.find(protected, start_character)
+            if found < 0:
+                break
+            found_any = True
+            byte_start = len(annotation.surface[:found].encode("utf-8"))
+            byte_end = byte_start + len(protected.encode("utf-8"))
+            ranges.add((byte_start, byte_end))
+            start_character = found + 1
+        if not found_any:
+            raise ValueError(
+                f"protected substring is absent: {protected!r} in {annotation.surface!r}"
+            )
+    return sorted(ranges)
+
+
+def _best_segmentation_score(
+    selected: set[int], annotation: FocusAnnotation
+) -> dict[str, object]:
+    candidates: list[dict[str, object]] = []
+    for segmentation in annotation.acceptable_segmentations:
+        expected = segmentation_byte_offsets(segmentation, annotation.surface)
+        true_positive = len(selected & expected)
+        if not selected and not expected:
+            precision = recall = f1 = 1.0
+        else:
+            precision = true_positive / len(selected) if selected else 0.0
+            recall = true_positive / len(expected) if expected else 0.0
+            f1 = (
+                2.0 * precision * recall / (precision + recall)
+                if precision + recall
+                else 0.0
+            )
+        candidates.append(
+            {
+                "segmentation": segmentation,
+                "expected_offsets": sorted(expected),
+                "precision": precision,
+                "recall": recall,
+                "f1": f1,
+            }
+        )
+    return max(
+        candidates,
+        key=lambda item: (item["f1"], item["precision"], item["recall"]),
+    )
+
+
+def _short_fragment_runs(
     surface: str,
     relative_boundaries: Iterable[int],
+    unexplained_offsets: set[int],
+    lexeme_fracture_offsets: set[int],
     maximum_codepoints: int = 1,
     minimum_run: int = 3,
-) -> int:
+) -> list[dict[str, object]]:
     surface_bytes = surface.encode("utf-8")
     codepoint_offsets = codepoint_boundary_offsets(surface)
     usable = sorted(
@@ -133,17 +192,36 @@ def _runs_of_short_fragments(
     for start, end in zip(endpoints, endpoints[1:]):
         lengths.append(len(surface_bytes[start:end].decode("utf-8")))
 
-    runs = 0
-    current = 0
-    for length in lengths:
+    runs: list[dict[str, object]] = []
+    current_start: int | None = None
+    for index, length in enumerate(lengths):
         if length <= maximum_codepoints:
-            current += 1
+            if current_start is None:
+                current_start = index
         else:
-            if current >= minimum_run:
-                runs += 1
-            current = 0
-    if current >= minimum_run:
-        runs += 1
+            if current_start is not None and index - current_start >= minimum_run:
+                internal = set(endpoints[current_start + 1 : index])
+                runs.append(
+                    {
+                        "chunk_count": index - current_start,
+                        "boundary_offsets": sorted(internal),
+                        "unexplained_offsets": sorted(internal & unexplained_offsets),
+                        "lexeme_fracture_offsets": sorted(
+                            internal & lexeme_fracture_offsets
+                        ),
+                    }
+                )
+            current_start = None
+    if current_start is not None and len(lengths) - current_start >= minimum_run:
+        internal = set(endpoints[current_start + 1 : len(lengths)])
+        runs.append(
+            {
+                "chunk_count": len(lengths) - current_start,
+                "boundary_offsets": sorted(internal),
+                "unexplained_offsets": sorted(internal & unexplained_offsets),
+                "lexeme_fracture_offsets": sorted(internal & lexeme_fracture_offsets),
+            }
+        )
     return runs
 
 
@@ -176,13 +254,31 @@ def score_focus_boundaries(
     explained = evaluable_selected & acceptable_offsets
     unexplained = evaluable_selected - acceptable_offsets
     expected_selected = acceptable_offsets & evaluable_selected
+    protected_ranges = protected_byte_ranges(annotation)
+    lexeme_fractures = {
+        offset
+        for offset in evaluable_selected
+        if any(start < offset < end for start, end in protected_ranges)
+    }
 
     selected_count = len(evaluable_selected)
     acceptable_count = len(acceptable_offsets)
     precision = len(explained) / selected_count if selected_count else None
     coverage = len(expected_selected) / acceptable_count if acceptable_count else None
     unexplained_rate = len(unexplained) / selected_count if selected_count else None
-    short_runs = _runs_of_short_fragments(annotation.surface, evaluable_selected)
+    short_runs = _short_fragment_runs(
+        annotation.surface,
+        evaluable_selected,
+        unexplained,
+        lexeme_fractures,
+    )
+    severe_runs = [
+        run
+        for run in short_runs
+        if int(run["chunk_count"]) >= 4
+        and len(run["unexplained_offsets"]) >= 2
+    ]
+    best_segmentation = _best_segmentation_score(evaluable_selected, annotation)
 
     return {
         "surface": annotation.surface,
@@ -195,6 +291,18 @@ def score_focus_boundaries(
         "explainable_boundary_precision": precision,
         "category_coverage": coverage,
         "unexplained_boundary_rate": unexplained_rate,
-        "pathological_fragmentation_runs": short_runs,
-        "has_pathological_fragmentation": short_runs > 0,
+        "protected_byte_ranges": [list(item) for item in protected_ranges],
+        "lexeme_fracture_offsets": sorted(lexeme_fractures),
+        "lexeme_fracture_rate": len(lexeme_fractures) / selected_count
+        if selected_count
+        else None,
+        "best_segmentation": best_segmentation,
+        "short_fragmentation_runs": short_runs,
+        "severe_short_fragmentation_runs": severe_runs,
+        "has_short_fragmentation": bool(short_runs),
+        "has_severe_short_fragmentation": bool(severe_runs),
+        # Backward-compatible names. This is a descriptive short-run flag and is
+        # no longer used as a standalone candidate exclusion criterion.
+        "pathological_fragmentation_runs": len(short_runs),
+        "has_pathological_fragmentation": bool(short_runs),
     }

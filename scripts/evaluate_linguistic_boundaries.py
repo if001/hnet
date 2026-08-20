@@ -47,8 +47,8 @@ def parse_args() -> argparse.Namespace:
 
 def load_probe(path: Path) -> dict[str, Any]:
     payload = json.loads(path.read_text(encoding="utf-8"))
-    if payload.get("version") != 1:
-        raise ValueError("only linguistic boundary probe version 1 is supported")
+    if payload.get("version") not in {1, 2}:
+        raise ValueError("only linguistic boundary probe versions 1 and 2 are supported")
     if not payload.get("records") or not payload.get("budget_profiles"):
         raise ValueError("probe must contain records and budget_profiles")
     return payload
@@ -143,6 +143,7 @@ def evaluate_record(
         surface=focus["surface"],
         occurrence=int(focus.get("occurrence", 0)),
         acceptable_segmentations=tuple(focus["acceptable_segmentations"]),
+        protected_substrings=tuple(focus.get("protected_substrings", ())),
     )
 
     native_output = model(**forward_kwargs)
@@ -229,7 +230,7 @@ def main() -> None:
         for record in probe["records"]
     ]
     output = {
-        "version": 1,
+        "version": int(probe["version"]),
         "model_name": args.model_name,
         "model_path": args.model_path,
         "config_path": args.config_path,

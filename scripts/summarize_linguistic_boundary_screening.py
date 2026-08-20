@@ -22,7 +22,7 @@ def load_runs(paths: Iterable[Path]) -> list[dict[str, Any]]:
     runs = []
     for path in paths:
         payload = json.loads(path.read_text(encoding="utf-8"))
-        if payload.get("version") != 1:
+        if payload.get("version") not in {1, 2}:
             raise ValueError(f"unsupported result version in {path}")
         payload["_source_path"] = str(path)
         runs.append(payload)
@@ -64,6 +64,31 @@ def aggregate_scores(runs: list[dict[str, Any]]) -> list[dict[str, Any]]:
         pathological = sum(
             bool(score["has_pathological_fragmentation"]) for score in scores
         )
+        short_fragmentation = sum(
+            bool(score.get("has_short_fragmentation", False)) for score in scores
+        )
+        severe_fragmentation = sum(
+            bool(score.get("has_severe_short_fragmentation", False))
+            for score in scores
+        )
+        lexeme_fractures = sum(
+            len(score.get("lexeme_fracture_offsets", ())) for score in scores
+        )
+        best_precision = [
+            float(score["best_segmentation"]["precision"])
+            for score in scores
+            if "best_segmentation" in score
+        ]
+        best_recall = [
+            float(score["best_segmentation"]["recall"])
+            for score in scores
+            if "best_segmentation" in score
+        ]
+        best_f1 = [
+            float(score["best_segmentation"]["f1"])
+            for score in scores
+            if "best_segmentation" in score
+        ]
         row = {
             **metadata[key],
             "run_id": run_id,
@@ -84,6 +109,16 @@ def aggregate_scores(runs: list[dict[str, Any]]) -> list[dict[str, Any]]:
             if selected
             else None,
             "pathological_fragmentation_record_rate": pathological / len(scores),
+            "short_fragmentation_record_rate": short_fragmentation / len(scores),
+            "severe_short_fragmentation_record_rate": severe_fragmentation
+            / len(scores),
+            "lexeme_fracture_boundaries": lexeme_fractures,
+            "lexeme_fracture_rate": lexeme_fractures / selected
+            if selected
+            else None,
+            "best_segmentation_precision_mean": optional_mean(best_precision),
+            "best_segmentation_recall_mean": optional_mean(best_recall),
+            "best_segmentation_f1_mean": optional_mean(best_f1),
         }
         rows.append(row)
     return rows
@@ -213,7 +248,7 @@ def main() -> None:
     write_csv(args.output_dir / "linguistic_boundary_pairs.csv", pair_rows)
     write_gallery(args.output_dir / "linguistic_boundary_blind_gallery.md", runs)
     summary = {
-        "version": 1,
+        "version": max(int(run["version"]) for run in runs),
         "input_count": len(runs),
         "inputs": [run["_source_path"] for run in runs],
         "score_rows": score_rows,

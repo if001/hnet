@@ -1,0 +1,1474 @@
+{
+  "version": 2,
+  "description": "Expanded Japanese linguistic-boundary proxy. Alternative complete segmentations and protected lexical substrings are human annotations.",
+  "budget_profiles": [
+    {
+      "id": "low_compression",
+      "stage0_units_per_chunk": 2.5,
+      "stage1_units_per_chunk": 2.5
+    },
+    {
+      "id": "central",
+      "stage0_units_per_chunk": 3.0,
+      "stage1_units_per_chunk": 3.0
+    },
+    {
+      "id": "high_compression",
+      "stage0_units_per_chunk": 3.5,
+      "stage1_units_per_chunk": 3.5
+    }
+  ],
+  "records": [
+    {
+      "id": "inflection-progressive-01",
+      "category": "inflection",
+      "text": "彼女は冗談を聞いて笑っている。",
+      "focus": {
+        "surface": "笑っている",
+        "occurrence": 0,
+        "acceptable_segmentations": [
+          "笑|っている",
+          "笑って|いる"
+        ]
+      },
+      "pair": {
+        "group": "laugh-context",
+        "kind": "dynamic",
+        "variant": "progressive"
+      }
+    },
+    {
+      "id": "inflection-literal-01",
+      "category": "inflection",
+      "text": "「笑っている」という文字列を検索する。",
+      "focus": {
+        "surface": "笑っている",
+        "occurrence": 0,
+        "acceptable_segmentations": [
+          "笑っている"
+        ]
+      },
+      "pair": {
+        "group": "laugh-context",
+        "kind": "dynamic",
+        "variant": "literal"
+      }
+    },
+    {
+      "id": "inflection-progressive-02",
+      "category": "inflection",
+      "text": "学生が机で報告書を書いている。",
+      "focus": {
+        "surface": "書いている",
+        "occurrence": 0,
+        "acceptable_segmentations": [
+          "書|いている",
+          "書いて|いる"
+        ]
+      },
+      "pair": {
+        "group": "write-control",
+        "kind": "control",
+        "variant": "student"
+      }
+    },
+    {
+      "id": "inflection-progressive-03",
+      "category": "inflection",
+      "text": "彼女は静かな部屋で手紙を書いている。",
+      "focus": {
+        "surface": "書いている",
+        "occurrence": 0,
+        "acceptable_segmentations": [
+          "書|いている",
+          "書いて|いる"
+        ]
+      },
+      "pair": {
+        "group": "write-control",
+        "kind": "control",
+        "variant": "letter"
+      }
+    },
+    {
+      "id": "auxiliary-negative-01",
+      "category": "auxiliary",
+      "text": "設定はまだ変更していない。",
+      "focus": {
+        "surface": "変更していない",
+        "occurrence": 0,
+        "acceptable_segmentations": [
+          "変更|していない",
+          "変更して|いない"
+        ],
+        "protected_substrings": [
+          "変更"
+        ]
+      }
+    },
+    {
+      "id": "auxiliary-causative-01",
+      "category": "auxiliary",
+      "text": "先生が生徒に文章を書かせる。",
+      "focus": {
+        "surface": "書かせる",
+        "occurrence": 0,
+        "acceptable_segmentations": [
+          "書か|せる",
+          "書|かせる"
+        ]
+      }
+    },
+    {
+      "id": "particle-subject-01",
+      "category": "particle",
+      "text": "人が結果を確認した。",
+      "focus": {
+        "surface": "人が結果を",
+        "occurrence": 0,
+        "acceptable_segmentations": [
+          "人|が|結果|を",
+          "人が|結果を"
+        ]
+      }
+    },
+    {
+      "id": "particle-topic-01",
+      "category": "particle",
+      "text": "モデルは境界を学習する。",
+      "focus": {
+        "surface": "モデルは境界を",
+        "occurrence": 0,
+        "acceptable_segmentations": [
+          "モデル|は|境界|を",
+          "モデルは|境界を"
+        ]
+      }
+    },
+    {
+      "id": "bunsetsu-conditional-01",
+      "category": "bunsetsu",
+      "text": "値が正しければ、そのまま次へ進む。",
+      "focus": {
+        "surface": "値が正しければ、そのまま次へ",
+        "occurrence": 0,
+        "acceptable_segmentations": [
+          "値が|正しければ|、|そのまま|次へ",
+          "値が正しければ|、|そのまま次へ"
+        ]
+      }
+    },
+    {
+      "id": "bunsetsu-causal-01",
+      "category": "bunsetsu",
+      "text": "エラーが出たため、設定を見直した。",
+      "focus": {
+        "surface": "エラーが出たため、設定を",
+        "occurrence": 0,
+        "acceptable_segmentations": [
+          "エラーが|出たため|、|設定を",
+          "エラーが出たため|、|設定を"
+        ]
+      }
+    },
+    {
+      "id": "compound-nlp-01",
+      "category": "compound",
+      "text": "自然言語処理モデルを追加学習する。",
+      "focus": {
+        "surface": "自然言語処理モデル",
+        "occurrence": 0,
+        "acceptable_segmentations": [
+          "自然言語処理|モデル",
+          "自然言語|処理|モデル"
+        ],
+        "protected_substrings": [
+          "自然",
+          "言語",
+          "処理",
+          "モデル"
+        ]
+      }
+    },
+    {
+      "id": "compound-boundary-01",
+      "category": "compound",
+      "text": "動的チャンク境界を可視化する。",
+      "focus": {
+        "surface": "動的チャンク境界",
+        "occurrence": 0,
+        "acceptable_segmentations": [
+          "動的|チャンク|境界",
+          "動的チャンク|境界"
+        ],
+        "protected_substrings": [
+          "動的",
+          "チャンク",
+          "境界"
+        ]
+      }
+    },
+    {
+      "id": "compound-experiment-01",
+      "category": "compound",
+      "text": "境界介入実験結果を保存した。",
+      "focus": {
+        "surface": "境界介入実験結果",
+        "occurrence": 0,
+        "acceptable_segmentations": [
+          "境界介入|実験結果",
+          "境界|介入|実験|結果"
+        ],
+        "protected_substrings": [
+          "境界",
+          "介入",
+          "実験",
+          "結果"
+        ]
+      }
+    },
+    {
+      "id": "compound-fragmentation-01",
+      "category": "compound",
+      "text": "分割の結果は人が確認する。",
+      "focus": {
+        "surface": "分割の結果は人が",
+        "occurrence": 0,
+        "acceptable_segmentations": [
+          "分割の|結果は|人が",
+          "分割|の|結果|は|人|が"
+        ],
+        "protected_substrings": [
+          "分割",
+          "結果"
+        ]
+      }
+    },
+    {
+      "id": "punctuation-comma-01",
+      "category": "punctuation",
+      "text": "学習が終わったら、重みを保存する。",
+      "focus": {
+        "surface": "終わったら、重みを",
+        "occurrence": 0,
+        "acceptable_segmentations": [
+          "終わったら|、|重みを",
+          "終わったら、|重みを"
+        ]
+      }
+    },
+    {
+      "id": "punctuation-quote-01",
+      "category": "punctuation",
+      "text": "画面に「処理が完了しました」と表示された。",
+      "focus": {
+        "surface": "「処理が完了しました」と",
+        "occurrence": 0,
+        "acceptable_segmentations": [
+          "「|処理が完了しました|」|と",
+          "「処理が完了しました」|と"
+        ]
+      }
+    },
+    {
+      "id": "proper-noun-01",
+      "category": "proper_noun",
+      "text": "東京都千代田区で会議を開く。",
+      "focus": {
+        "surface": "東京都千代田区",
+        "occurrence": 0,
+        "acceptable_segmentations": [
+          "東京都|千代田区",
+          "東京|都|千代田|区"
+        ],
+        "protected_substrings": [
+          "東京",
+          "千代田"
+        ]
+      }
+    },
+    {
+      "id": "number-unit-01",
+      "category": "number_unit",
+      "text": "500ミリ秒後に再試行する。",
+      "focus": {
+        "surface": "500ミリ秒後",
+        "occurrence": 0,
+        "acceptable_segmentations": [
+          "500|ミリ秒|後",
+          "500ミリ秒|後"
+        ]
+      }
+    },
+    {
+      "id": "identifier-01",
+      "category": "identifier",
+      "text": "validation_lossをstep=110で確認する。",
+      "focus": {
+        "surface": "validation_lossをstep=110",
+        "occurrence": 0,
+        "acceptable_segmentations": [
+          "validation_loss|を|step|=|110",
+          "validation_lossを|step=110"
+        ],
+        "protected_substrings": [
+          "validation_loss",
+          "step"
+        ]
+      }
+    },
+    {
+      "id": "path-01",
+      "category": "identifier",
+      "text": "/content/drive/MyDrive/hnet_agentの結果を読む。",
+      "focus": {
+        "surface": "/content/drive/MyDrive/hnet_agent",
+        "occurrence": 0,
+        "acceptable_segmentations": [
+          "/|content|/|drive|/|MyDrive|/|hnet_agent",
+          "/content/drive/MyDrive/hnet_agent"
+        ],
+        "protected_substrings": [
+          "content",
+          "drive",
+          "MyDrive",
+          "hnet_agent"
+        ]
+      }
+    },
+    {
+      "id": "json-01",
+      "category": "structured",
+      "text": "応答は{\"query\":\"東京の天気\"}だった。",
+      "focus": {
+        "surface": "{\"query\":\"東京の天気\"}",
+        "occurrence": 0,
+        "acceptable_segmentations": [
+          "{|\"query\"|:|\"東京の天気\"|}",
+          "{\"query\":|\"東京の天気\"}"
+        ],
+        "protected_substrings": [
+          "query",
+          "東京",
+          "天気"
+        ]
+      }
+    },
+    {
+      "id": "code-call-01",
+      "category": "structured",
+      "text": "torch.allclose(a, b)で同値を確認する。",
+      "focus": {
+        "surface": "torch.allclose(a, b)",
+        "occurrence": 0,
+        "acceptable_segmentations": [
+          "torch|.|allclose|(|a|,| |b|)",
+          "torch.allclose|(a, b)"
+        ],
+        "protected_substrings": [
+          "torch",
+          "allclose"
+        ]
+      }
+    },
+    {
+      "id": "control-boundary-01",
+      "category": "context_control",
+      "text": "短い実験で動的チャンク境界を確認した。",
+      "focus": {
+        "surface": "動的チャンク境界",
+        "occurrence": 0,
+        "acceptable_segmentations": [
+          "動的|チャンク|境界",
+          "動的チャンク|境界"
+        ],
+        "protected_substrings": [
+          "動的",
+          "チャンク",
+          "境界"
+        ]
+      },
+      "pair": {
+        "group": "boundary-control",
+        "kind": "control",
+        "variant": "short"
+      }
+    },
+    {
+      "id": "control-boundary-02",
+      "category": "context_control",
+      "text": "長い学習の後でも動的チャンク境界を詳しく確認した。",
+      "focus": {
+        "surface": "動的チャンク境界",
+        "occurrence": 0,
+        "acceptable_segmentations": [
+          "動的|チャンク|境界",
+          "動的チャンク|境界"
+        ],
+        "protected_substrings": [
+          "動的",
+          "チャンク",
+          "境界"
+        ]
+      },
+      "pair": {
+        "group": "boundary-control",
+        "kind": "control",
+        "variant": "long"
+      }
+    },
+    {
+      "id": "inflection-past-01",
+      "category": "inflection",
+      "text": "彼は昨日まで笑っていた。",
+      "focus": {
+        "surface": "笑っていた",
+        "occurrence": 0,
+        "acceptable_segmentations": [
+          "笑|っていた",
+          "笑って|いた"
+        ]
+      }
+    },
+    {
+      "id": "inflection-compound-01",
+      "category": "inflection",
+      "text": "結果をもう一度書き直した。",
+      "focus": {
+        "surface": "書き直した",
+        "occurrence": 0,
+        "acceptable_segmentations": [
+          "書き|直した",
+          "書き直し|た"
+        ]
+      }
+    },
+    {
+      "id": "inflection-loading-01",
+      "category": "inflection",
+      "text": "ログを読み込んでいる。",
+      "focus": {
+        "surface": "読み込んでいる",
+        "occurrence": 0,
+        "acceptable_segmentations": [
+          "読み|込んでいる",
+          "読み込んで|いる"
+        ]
+      }
+    },
+    {
+      "id": "inflection-conditional-01",
+      "category": "inflection",
+      "text": "設定を変更できれば続行する。",
+      "focus": {
+        "surface": "変更できれば",
+        "occurrence": 0,
+        "acceptable_segmentations": [
+          "変更|できれば",
+          "変更でき|れば"
+        ],
+        "protected_substrings": [
+          "変更"
+        ]
+      }
+    },
+    {
+      "id": "auxiliary-passive-progressive-01",
+      "category": "auxiliary",
+      "text": "重みは既に保存されている。",
+      "focus": {
+        "surface": "保存されている",
+        "occurrence": 0,
+        "acceptable_segmentations": [
+          "保存|されている",
+          "保存されて|いる"
+        ],
+        "protected_substrings": [
+          "保存"
+        ]
+      }
+    },
+    {
+      "id": "auxiliary-completive-01",
+      "category": "auxiliary",
+      "text": "誤った設定で実行してしまった。",
+      "focus": {
+        "surface": "実行してしまった",
+        "occurrence": 0,
+        "acceptable_segmentations": [
+          "実行|してしまった",
+          "実行して|しまった"
+        ],
+        "protected_substrings": [
+          "実行"
+        ]
+      }
+    },
+    {
+      "id": "auxiliary-obligation-01",
+      "category": "auxiliary",
+      "text": "出力を確認しなければならない。",
+      "focus": {
+        "surface": "確認しなければならない",
+        "occurrence": 0,
+        "acceptable_segmentations": [
+          "確認|しなければならない",
+          "確認しなければ|ならない"
+        ],
+        "protected_substrings": [
+          "確認"
+        ]
+      }
+    },
+    {
+      "id": "auxiliary-causative-past-01",
+      "category": "auxiliary",
+      "text": "担当者に設定を読み込ませた。",
+      "focus": {
+        "surface": "読み込ませた",
+        "occurrence": 0,
+        "acceptable_segmentations": [
+          "読み|込ませた",
+          "読み込ま|せた"
+        ]
+      }
+    },
+    {
+      "id": "auxiliary-desiderative-01",
+      "category": "auxiliary",
+      "text": "別のデータでも学習したい。",
+      "focus": {
+        "surface": "学習したい",
+        "occurrence": 0,
+        "acceptable_segmentations": [
+          "学習|したい",
+          "学習し|たい"
+        ],
+        "protected_substrings": [
+          "学習"
+        ]
+      }
+    },
+    {
+      "id": "auxiliary-potential-negative-01",
+      "category": "auxiliary",
+      "text": "現在の権限では更新できない。",
+      "focus": {
+        "surface": "更新できない",
+        "occurrence": 0,
+        "acceptable_segmentations": [
+          "更新|できない",
+          "更新でき|ない"
+        ],
+        "protected_substrings": [
+          "更新"
+        ]
+      }
+    },
+    {
+      "id": "particle-range-01",
+      "category": "particle",
+      "text": "東京から大阪まで移動する。",
+      "focus": {
+        "surface": "東京から大阪まで",
+        "occurrence": 0,
+        "acceptable_segmentations": [
+          "東京|から|大阪|まで",
+          "東京から|大阪まで"
+        ],
+        "protected_substrings": [
+          "東京",
+          "大阪"
+        ]
+      }
+    },
+    {
+      "id": "particle-topic-compound-01",
+      "category": "particle",
+      "text": "結果について確認する。",
+      "focus": {
+        "surface": "結果について",
+        "occurrence": 0,
+        "acceptable_segmentations": [
+          "結果|について"
+        ],
+        "protected_substrings": [
+          "結果"
+        ]
+      }
+    },
+    {
+      "id": "particle-cause-01",
+      "category": "particle",
+      "text": "条件によって出力が変化する。",
+      "focus": {
+        "surface": "条件によって",
+        "occurrence": 0,
+        "acceptable_segmentations": [
+          "条件|によって"
+        ],
+        "protected_substrings": [
+          "条件"
+        ]
+      }
+    },
+    {
+      "id": "particle-purpose-01",
+      "category": "particle",
+      "text": "実験のために環境を準備する。",
+      "focus": {
+        "surface": "実験のために",
+        "occurrence": 0,
+        "acceptable_segmentations": [
+          "実験|の|ため|に",
+          "実験の|ために"
+        ],
+        "protected_substrings": [
+          "実験"
+        ]
+      }
+    },
+    {
+      "id": "particle-limiter-01",
+      "category": "particle",
+      "text": "今回はモデルだけを更新する。",
+      "focus": {
+        "surface": "モデルだけを",
+        "occurrence": 0,
+        "acceptable_segmentations": [
+          "モデル|だけ|を",
+          "モデルだけ|を"
+        ],
+        "protected_substrings": [
+          "モデル"
+        ]
+      }
+    },
+    {
+      "id": "particle-additive-01",
+      "category": "particle",
+      "text": "入力にも出力にも同じ規則を使う。",
+      "focus": {
+        "surface": "入力にも出力にも",
+        "occurrence": 0,
+        "acceptable_segmentations": [
+          "入力|に|も|出力|に|も",
+          "入力にも|出力にも"
+        ],
+        "protected_substrings": [
+          "入力",
+          "出力"
+        ]
+      }
+    },
+    {
+      "id": "bunsetsu-causal-02",
+      "category": "bunsetsu",
+      "text": "学習が終わったので、結果を保存した。",
+      "focus": {
+        "surface": "学習が終わったので、結果を",
+        "occurrence": 0,
+        "acceptable_segmentations": [
+          "学習が|終わったので|、|結果を",
+          "学習が終わったので|、|結果を"
+        ]
+      }
+    },
+    {
+      "id": "bunsetsu-concessive-01",
+      "category": "bunsetsu",
+      "text": "失敗しても、条件を変えて再試行する。",
+      "focus": {
+        "surface": "失敗しても、条件を",
+        "occurrence": 0,
+        "acceptable_segmentations": [
+          "失敗しても|、|条件を",
+          "失敗しても、|条件を"
+        ]
+      }
+    },
+    {
+      "id": "bunsetsu-discovery-01",
+      "category": "bunsetsu",
+      "text": "確認したところ、問題は見つからなかった。",
+      "focus": {
+        "surface": "確認したところ、問題は",
+        "occurrence": 0,
+        "acceptable_segmentations": [
+          "確認したところ|、|問題は",
+          "確認したところ、|問題は"
+        ]
+      }
+    },
+    {
+      "id": "bunsetsu-conditional-02",
+      "category": "bunsetsu",
+      "text": "設定を変えると、結果も変化した。",
+      "focus": {
+        "surface": "設定を変えると、結果も",
+        "occurrence": 0,
+        "acceptable_segmentations": [
+          "設定を|変えると|、|結果も",
+          "設定を変えると|、|結果も"
+        ],
+        "protected_substrings": [
+          "設定",
+          "結果"
+        ]
+      }
+    },
+    {
+      "id": "bunsetsu-adversative-01",
+      "category": "bunsetsu",
+      "text": "時間がないにもかかわらず、実験を続けた。",
+      "focus": {
+        "surface": "時間がないにもかかわらず、実験を",
+        "occurrence": 0,
+        "acceptable_segmentations": [
+          "時間が|ないにもかかわらず|、|実験を",
+          "時間がないにもかかわらず|、|実験を"
+        ],
+        "protected_substrings": [
+          "時間",
+          "実験"
+        ]
+      }
+    },
+    {
+      "id": "bunsetsu-conditional-03",
+      "category": "bunsetsu",
+      "text": "必要であれば、追加の検証を行う。",
+      "focus": {
+        "surface": "必要であれば、追加の検証を",
+        "occurrence": 0,
+        "acceptable_segmentations": [
+          "必要であれば|、|追加の|検証を",
+          "必要であれば、|追加の検証を"
+        ],
+        "protected_substrings": [
+          "必要",
+          "追加",
+          "検証"
+        ]
+      }
+    },
+    {
+      "id": "compound-ml-01",
+      "category": "compound",
+      "text": "機械学習モデルを比較する。",
+      "focus": {
+        "surface": "機械学習モデル",
+        "occurrence": 0,
+        "acceptable_segmentations": [
+          "機械学習|モデル",
+          "機械|学習|モデル"
+        ],
+        "protected_substrings": [
+          "機械",
+          "学習",
+          "モデル"
+        ]
+      }
+    },
+    {
+      "id": "compound-llm-01",
+      "category": "compound",
+      "text": "大規模言語モデルを訓練する。",
+      "focus": {
+        "surface": "大規模言語モデル",
+        "occurrence": 0,
+        "acceptable_segmentations": [
+          "大規模|言語|モデル",
+          "大規模言語|モデル"
+        ],
+        "protected_substrings": [
+          "大規模",
+          "言語",
+          "モデル"
+        ]
+      }
+    },
+    {
+      "id": "compound-hpc-01",
+      "category": "compound",
+      "text": "高性能計算機を利用した。",
+      "focus": {
+        "surface": "高性能計算機",
+        "occurrence": 0,
+        "acceptable_segmentations": [
+          "高性能|計算機",
+          "高|性能|計算機"
+        ],
+        "protected_substrings": [
+          "性能",
+          "計算機"
+        ]
+      }
+    },
+    {
+      "id": "compound-society-01",
+      "category": "compound",
+      "text": "情報処理学会で発表する。",
+      "focus": {
+        "surface": "情報処理学会",
+        "occurrence": 0,
+        "acceptable_segmentations": [
+          "情報処理|学会",
+          "情報|処理|学会"
+        ],
+        "protected_substrings": [
+          "情報",
+          "処理",
+          "学会"
+        ]
+      }
+    },
+    {
+      "id": "punctuation-parentheses-01",
+      "category": "punctuation",
+      "text": "結果（暫定値）を共有した。",
+      "focus": {
+        "surface": "（暫定値）",
+        "occurrence": 0,
+        "acceptable_segmentations": [
+          "（|暫定値|）",
+          "（暫定値）"
+        ],
+        "protected_substrings": [
+          "暫定"
+        ]
+      }
+    },
+    {
+      "id": "punctuation-short-quote-01",
+      "category": "punctuation",
+      "text": "画面に「開始」と表示する。",
+      "focus": {
+        "surface": "「開始」と",
+        "occurrence": 0,
+        "acceptable_segmentations": [
+          "「|開始|」|と",
+          "「開始」|と"
+        ],
+        "protected_substrings": [
+          "開始"
+        ]
+      }
+    },
+    {
+      "id": "punctuation-colon-01",
+      "category": "punctuation",
+      "text": "注意：設定を確認する。",
+      "focus": {
+        "surface": "注意：設定",
+        "occurrence": 0,
+        "acceptable_segmentations": [
+          "注意|：|設定",
+          "注意：|設定"
+        ],
+        "protected_substrings": [
+          "注意",
+          "設定"
+        ]
+      }
+    },
+    {
+      "id": "punctuation-semicolon-01",
+      "category": "punctuation",
+      "text": "成功した；ただし警告が残った。",
+      "focus": {
+        "surface": "成功した；ただし",
+        "occurrence": 0,
+        "acceptable_segmentations": [
+          "成功した|；|ただし",
+          "成功した；|ただし"
+        ]
+      }
+    },
+    {
+      "id": "punctuation-ellipsis-01",
+      "category": "punctuation",
+      "text": "処理中……しばらく待つ。",
+      "focus": {
+        "surface": "処理中……しばらく",
+        "occurrence": 0,
+        "acceptable_segmentations": [
+          "処理中|……|しばらく"
+        ],
+        "protected_substrings": [
+          "処理"
+        ]
+      }
+    },
+    {
+      "id": "punctuation-list-01",
+      "category": "punctuation",
+      "text": "項目A、項目B、項目Cを比較する。",
+      "focus": {
+        "surface": "項目A、項目B、項目C",
+        "occurrence": 0,
+        "acceptable_segmentations": [
+          "項目A|、|項目B|、|項目C"
+        ],
+        "protected_substrings": [
+          "項目"
+        ]
+      }
+    },
+    {
+      "id": "proper-noun-kyoto-01",
+      "category": "proper_noun",
+      "text": "京都市左京区で開催する。",
+      "focus": {
+        "surface": "京都市左京区",
+        "occurrence": 0,
+        "acceptable_segmentations": [
+          "京都市|左京区",
+          "京都|市|左京|区"
+        ],
+        "protected_substrings": [
+          "京都",
+          "左京"
+        ]
+      }
+    },
+    {
+      "id": "proper-noun-un-01",
+      "category": "proper_noun",
+      "text": "国際連合安全保障理事会が決議した。",
+      "focus": {
+        "surface": "国際連合安全保障理事会",
+        "occurrence": 0,
+        "acceptable_segmentations": [
+          "国際連合|安全保障理事会",
+          "国際|連合|安全保障|理事会"
+        ],
+        "protected_substrings": [
+          "国際",
+          "連合",
+          "安全",
+          "保障",
+          "理事会"
+        ]
+      }
+    },
+    {
+      "id": "proper-noun-university-01",
+      "category": "proper_noun",
+      "text": "東京大学大学院に進学した。",
+      "focus": {
+        "surface": "東京大学大学院",
+        "occurrence": 0,
+        "acceptable_segmentations": [
+          "東京大学|大学院",
+          "東京|大学|大学院"
+        ],
+        "protected_substrings": [
+          "東京",
+          "大学"
+        ]
+      }
+    },
+    {
+      "id": "proper-noun-person-01",
+      "category": "proper_noun",
+      "text": "山田太郎さんが発表した。",
+      "focus": {
+        "surface": "山田太郎",
+        "occurrence": 0,
+        "acceptable_segmentations": [
+          "山田|太郎",
+          "山田太郎"
+        ],
+        "protected_substrings": [
+          "山田",
+          "太郎"
+        ]
+      }
+    },
+    {
+      "id": "proper-noun-company-01",
+      "category": "proper_noun",
+      "text": "OpenAI Japanが資料を公開した。",
+      "focus": {
+        "surface": "OpenAI Japan",
+        "occurrence": 0,
+        "acceptable_segmentations": [
+          "OpenAI| |Japan",
+          "OpenAI Japan"
+        ],
+        "protected_substrings": [
+          "OpenAI",
+          "Japan"
+        ]
+      }
+    },
+    {
+      "id": "proper-noun-railway-01",
+      "category": "proper_noun",
+      "text": "東北新幹線で移動する。",
+      "focus": {
+        "surface": "東北新幹線",
+        "occurrence": 0,
+        "acceptable_segmentations": [
+          "東北|新幹線",
+          "東北新幹線"
+        ],
+        "protected_substrings": [
+          "東北",
+          "新幹線"
+        ]
+      }
+    },
+    {
+      "id": "proper-noun-country-01",
+      "category": "proper_noun",
+      "text": "アメリカ合衆国で公開された。",
+      "focus": {
+        "surface": "アメリカ合衆国",
+        "occurrence": 0,
+        "acceptable_segmentations": [
+          "アメリカ|合衆国",
+          "アメリカ合衆国"
+        ],
+        "protected_substrings": [
+          "アメリカ",
+          "合衆国"
+        ]
+      }
+    },
+    {
+      "id": "number-decimal-01",
+      "category": "number_unit",
+      "text": "処理は3.14秒で完了した。",
+      "focus": {
+        "surface": "3.14秒",
+        "occurrence": 0,
+        "acceptable_segmentations": [
+          "3.14|秒",
+          "3.14秒"
+        ]
+      }
+    },
+    {
+      "id": "number-memory-01",
+      "category": "number_unit",
+      "text": "128GBのメモリを使用する。",
+      "focus": {
+        "surface": "128GB",
+        "occurrence": 0,
+        "acceptable_segmentations": [
+          "128|GB",
+          "128GB"
+        ],
+        "protected_substrings": [
+          "GB"
+        ]
+      }
+    },
+    {
+      "id": "number-date-01",
+      "category": "number_unit",
+      "text": "2026年8月20日に開始する。",
+      "focus": {
+        "surface": "2026年8月20日",
+        "occurrence": 0,
+        "acceptable_segmentations": [
+          "2026|年|8|月|20|日",
+          "2026年|8月|20日"
+        ]
+      }
+    },
+    {
+      "id": "number-percent-01",
+      "category": "number_unit",
+      "text": "精度が10%向上した。",
+      "focus": {
+        "surface": "10%",
+        "occurrence": 0,
+        "acceptable_segmentations": [
+          "10|%",
+          "10%"
+        ]
+      }
+    },
+    {
+      "id": "number-scientific-01",
+      "category": "number_unit",
+      "text": "学習率を1e-4に設定した。",
+      "focus": {
+        "surface": "1e-4",
+        "occurrence": 0,
+        "acceptable_segmentations": [
+          "1e-4"
+        ]
+      }
+    },
+    {
+      "id": "number-counter-01",
+      "category": "number_unit",
+      "text": "42件の結果を確認した。",
+      "focus": {
+        "surface": "42件",
+        "occurrence": 0,
+        "acceptable_segmentations": [
+          "42|件",
+          "42件"
+        ]
+      }
+    },
+    {
+      "id": "number-distance-01",
+      "category": "number_unit",
+      "text": "5km先の施設へ移動した。",
+      "focus": {
+        "surface": "5km",
+        "occurrence": 0,
+        "acceptable_segmentations": [
+          "5|km",
+          "5km"
+        ],
+        "protected_substrings": [
+          "km"
+        ]
+      }
+    },
+    {
+      "id": "identifier-camel-01",
+      "category": "identifier",
+      "text": "maxSequenceLengthを更新する。",
+      "focus": {
+        "surface": "maxSequenceLength",
+        "occurrence": 0,
+        "acceptable_segmentations": [
+          "max|Sequence|Length",
+          "maxSequenceLength"
+        ],
+        "protected_substrings": [
+          "Sequence",
+          "Length"
+        ]
+      }
+    },
+    {
+      "id": "identifier-env-01",
+      "category": "identifier",
+      "text": "CUDA_VISIBLE_DEVICESを確認する。",
+      "focus": {
+        "surface": "CUDA_VISIBLE_DEVICES",
+        "occurrence": 0,
+        "acceptable_segmentations": [
+          "CUDA|_|VISIBLE|_|DEVICES",
+          "CUDA_VISIBLE_DEVICES"
+        ],
+        "protected_substrings": [
+          "CUDA",
+          "VISIBLE",
+          "DEVICES"
+        ]
+      }
+    },
+    {
+      "id": "identifier-url-01",
+      "category": "identifier",
+      "text": "https://example.com/api/v1へ接続する。",
+      "focus": {
+        "surface": "https://example.com/api/v1",
+        "occurrence": 0,
+        "acceptable_segmentations": [
+          "https|://|example.com|/|api|/|v1",
+          "https://example.com/api/v1"
+        ],
+        "protected_substrings": [
+          "https",
+          "example",
+          "api"
+        ]
+      }
+    },
+    {
+      "id": "identifier-method-01",
+      "category": "identifier",
+      "text": "Trainer.fit_modelを呼び出す。",
+      "focus": {
+        "surface": "Trainer.fit_model",
+        "occurrence": 0,
+        "acceptable_segmentations": [
+          "Trainer|.|fit_model",
+          "Trainer.fit_model"
+        ],
+        "protected_substrings": [
+          "Trainer",
+          "fit_model"
+        ]
+      }
+    },
+    {
+      "id": "identifier-checkpoint-01",
+      "category": "identifier",
+      "text": "checkpoint_step_000220.ptを読む。",
+      "focus": {
+        "surface": "checkpoint_step_000220.pt",
+        "occurrence": 0,
+        "acceptable_segmentations": [
+          "checkpoint|_|step|_|000220|.|pt",
+          "checkpoint_step_000220|.pt"
+        ],
+        "protected_substrings": [
+          "checkpoint",
+          "step"
+        ]
+      }
+    },
+    {
+      "id": "identifier-option-01",
+      "category": "identifier",
+      "text": "--learning-rateを指定する。",
+      "focus": {
+        "surface": "--learning-rate",
+        "occurrence": 0,
+        "acceptable_segmentations": [
+          "--|learning-rate",
+          "--learning|-|rate"
+        ],
+        "protected_substrings": [
+          "learning",
+          "rate"
+        ]
+      }
+    },
+    {
+      "id": "structured-tool-01",
+      "category": "structured",
+      "text": "tool callは{\"tool\":\"search\",\"query\":\"東京\"}だった。",
+      "focus": {
+        "surface": "{\"tool\":\"search\",\"query\":\"東京\"}",
+        "occurrence": 0,
+        "acceptable_segmentations": [
+          "{|\"tool\"|:|\"search\"|,|\"query\"|:|\"東京\"|}",
+          "{\"tool\":\"search\",|\"query\":\"東京\"}"
+        ],
+        "protected_substrings": [
+          "tool",
+          "search",
+          "query",
+          "東京"
+        ]
+      }
+    },
+    {
+      "id": "structured-xml-01",
+      "category": "structured",
+      "text": "応答は<result>成功</result>だった。",
+      "focus": {
+        "surface": "<result>成功</result>",
+        "occurrence": 0,
+        "acceptable_segmentations": [
+          "<result>|成功|</result>",
+          "<|result|>|成功|</|result|>"
+        ],
+        "protected_substrings": [
+          "result",
+          "成功"
+        ]
+      }
+    },
+    {
+      "id": "structured-markdown-01",
+      "category": "structured",
+      "text": "詳細は[実験結果](report.md)を参照する。",
+      "focus": {
+        "surface": "[実験結果](report.md)",
+        "occurrence": 0,
+        "acceptable_segmentations": [
+          "[|実験結果|]|(|report.md|)",
+          "[実験結果]|(report.md)"
+        ],
+        "protected_substrings": [
+          "実験",
+          "結果",
+          "report"
+        ]
+      }
+    },
+    {
+      "id": "structured-assignment-01",
+      "category": "structured",
+      "text": "Pythonではloss = model(x)と書く。",
+      "focus": {
+        "surface": "loss = model(x)",
+        "occurrence": 0,
+        "acceptable_segmentations": [
+          "loss| |=| |model|(x)",
+          "loss = |model(x)"
+        ],
+        "protected_substrings": [
+          "loss",
+          "model"
+        ]
+      }
+    },
+    {
+      "id": "structured-shell-01",
+      "category": "structured",
+      "text": "端末でpython train.py --seed 42を実行する。",
+      "focus": {
+        "surface": "python train.py --seed 42",
+        "occurrence": 0,
+        "acceptable_segmentations": [
+          "python| |train.py| |--seed| |42",
+          "python train.py| |--seed 42"
+        ],
+        "protected_substrings": [
+          "python",
+          "train",
+          "seed"
+        ]
+      }
+    },
+    {
+      "id": "structured-yaml-01",
+      "category": "structured",
+      "text": "設定はlearning_rate: 0.0001だった。",
+      "focus": {
+        "surface": "learning_rate: 0.0001",
+        "occurrence": 0,
+        "acceptable_segmentations": [
+          "learning_rate|:| |0.0001",
+          "learning_rate:| |0.0001"
+        ],
+        "protected_substrings": [
+          "learning_rate"
+        ]
+      }
+    },
+    {
+      "id": "control-additional-01",
+      "category": "context_control",
+      "text": "追加学習結果を確認した。",
+      "focus": {
+        "surface": "追加学習結果",
+        "occurrence": 0,
+        "acceptable_segmentations": [
+          "追加学習|結果",
+          "追加|学習|結果"
+        ],
+        "protected_substrings": [
+          "追加",
+          "学習",
+          "結果"
+        ]
+      },
+      "pair": {
+        "group": "additional-control",
+        "kind": "control",
+        "variant": "short"
+      }
+    },
+    {
+      "id": "control-additional-02",
+      "category": "context_control",
+      "text": "長時間の実験後に追加学習結果を詳しく確認した。",
+      "focus": {
+        "surface": "追加学習結果",
+        "occurrence": 0,
+        "acceptable_segmentations": [
+          "追加学習|結果",
+          "追加|学習|結果"
+        ],
+        "protected_substrings": [
+          "追加",
+          "学習",
+          "結果"
+        ]
+      },
+      "pair": {
+        "group": "additional-control",
+        "kind": "control",
+        "variant": "long"
+      }
+    },
+    {
+      "id": "control-negative-01",
+      "category": "context_control",
+      "text": "設定を変更していない。",
+      "focus": {
+        "surface": "変更していない",
+        "occurrence": 0,
+        "acceptable_segmentations": [
+          "変更|していない",
+          "変更して|いない"
+        ],
+        "protected_substrings": [
+          "変更"
+        ]
+      },
+      "pair": {
+        "group": "negative-control",
+        "kind": "control",
+        "variant": "short"
+      }
+    },
+    {
+      "id": "control-negative-02",
+      "category": "context_control",
+      "text": "確認したが、重要な設定を変更していない。",
+      "focus": {
+        "surface": "変更していない",
+        "occurrence": 0,
+        "acceptable_segmentations": [
+          "変更|していない",
+          "変更して|いない"
+        ],
+        "protected_substrings": [
+          "変更"
+        ]
+      },
+      "pair": {
+        "group": "negative-control",
+        "kind": "control",
+        "variant": "long"
+      }
+    },
+    {
+      "id": "dynamic-capability-01",
+      "category": "context_control",
+      "text": "この環境なら実行できる。",
+      "focus": {
+        "surface": "実行できる",
+        "occurrence": 0,
+        "acceptable_segmentations": [
+          "実行|できる"
+        ],
+        "protected_substrings": [
+          "実行"
+        ]
+      },
+      "pair": {
+        "group": "capability-context",
+        "kind": "dynamic",
+        "variant": "capability"
+      }
+    },
+    {
+      "id": "dynamic-capability-02",
+      "category": "context_control",
+      "text": "画面に「実行できる」と表示された。",
+      "focus": {
+        "surface": "実行できる",
+        "occurrence": 0,
+        "acceptable_segmentations": [
+          "実行できる"
+        ],
+        "protected_substrings": [
+          "実行"
+        ]
+      },
+      "pair": {
+        "group": "capability-context",
+        "kind": "dynamic",
+        "variant": "literal"
+      }
+    }
+  ]
+}

@@ -9,6 +9,7 @@ from hnet.training.linguistic_boundaries import (
     acceptable_byte_offsets,
     boundary_budget,
     occurrence_byte_span,
+    protected_byte_ranges,
     score_focus_boundaries,
     segmentation_byte_offsets,
     select_topk_boundary_mask,
@@ -81,6 +82,42 @@ def test_short_fragment_run_is_reported() -> None:
     score = score_focus_boundaries(text, annotation, offsets)
     assert score["has_pathological_fragmentation"] is True
     assert score["pathological_fragmentation_runs"] == 1
+    assert score["has_short_fragmentation"] is True
+    assert score["has_severe_short_fragmentation"] is False
+
+
+def test_four_unexplained_short_fragments_are_severe() -> None:
+    text = "自然言語処理を学ぶ。"
+    annotation = FocusAnnotation(
+        surface="自然言語処理",
+        occurrence=0,
+        acceptable_segmentations=("自然|言語|処理",),
+        protected_substrings=("自然", "言語"),
+    )
+    offsets = [
+        len(prefix.encode("utf-8")) + 1
+        for prefix in ("自", "自然", "自然言", "自然言語")
+    ]
+    score = score_focus_boundaries(text, annotation, offsets)
+    assert score["has_short_fragmentation"] is True
+    assert score["has_severe_short_fragmentation"] is True
+    assert score["lexeme_fracture_offsets"] == [3, 9]
+
+
+def test_protected_ranges_and_best_complete_segmentation() -> None:
+    annotation = FocusAnnotation(
+        surface="東京都千代田区",
+        occurrence=0,
+        acceptable_segmentations=("東京都|千代田区", "東京|都|千代田|区"),
+        protected_substrings=("東京", "千代田"),
+    )
+    assert protected_byte_ranges(annotation) == [(0, 6), (9, 18)]
+    positions = [len(prefix.encode("utf-8")) + 1 for prefix in ("東", "東京都")]
+    score = score_focus_boundaries(
+        "東京都千代田区で会議を開く。", annotation, positions
+    )
+    assert score["best_segmentation"]["segmentation"] == "東京都|千代田区"
+    assert score["best_segmentation"]["f1"] == pytest.approx(2.0 / 3.0)
 
 
 def test_probe_segmentations_are_well_formed() -> None:
@@ -100,3 +137,28 @@ def test_probe_segmentations_are_well_formed() -> None:
         )
         occurrence_byte_span(record["text"], annotation.surface, annotation.occurrence)
         acceptable_byte_offsets(annotation)
+
+
+def test_v2_probe_segmentations_and_protected_substrings_are_well_formed() -> None:
+    root = Path(__file__).resolve().parents[2]
+    probe = json.loads(
+        (root / "configs/linguistic_boundary_probe_v2.json").read_text(
+            encoding="utf-8"
+        )
+    )
+    assert probe["version"] == 2
+    assert len(probe["records"]) == 88
+    counts: dict[str, int] = {}
+    for record in probe["records"]:
+        counts[record["category"]] = counts.get(record["category"], 0) + 1
+        focus = record["focus"]
+        annotation = FocusAnnotation(
+            surface=focus["surface"],
+            occurrence=focus.get("occurrence", 0),
+            acceptable_segmentations=tuple(focus["acceptable_segmentations"]),
+            protected_substrings=tuple(focus.get("protected_substrings", ())),
+        )
+        occurrence_byte_span(record["text"], annotation.surface, annotation.occurrence)
+        acceptable_byte_offsets(annotation)
+        protected_byte_ranges(annotation)
+    assert set(counts.values()) == {8}

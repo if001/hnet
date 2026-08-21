@@ -131,3 +131,4 @@ def test_sparse_trajectory_reports_transitions_and_late_window() -> None:
 
 def test_checkpoint_order_uses_last_numeric_component() -> None:
     assert checkpoint_order("seed42_step_000220") == 220
+    assert checkpoint_order("step55-family-v1") == 55

@@ -9,6 +9,9 @@ from typing import Any
 def checkpoint_order(label: object) -> int:
     if isinstance(label, int):
         return label
+    step_match = re.search(r"(?:^|[^a-z])step[_-]?(\d+)", str(label), re.IGNORECASE)
+    if step_match:
+        return int(step_match.group(1))
     matches = re.findall(r"\d+", str(label))
     if not matches:
         raise ValueError(f"checkpoint label has no numeric order: {label!r}")

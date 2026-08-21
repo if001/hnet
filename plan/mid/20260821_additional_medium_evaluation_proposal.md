@@ -6,11 +6,18 @@
 
 拡張日本語probeのPhase 2では、K1G1、K3G1、K3T1、T26で強いcategoryが異なり、
 category別precision/coverageもstepとともに変化した。長期実験へ進む前に、既存結果の
-追加解析と少数の混合main network実験で、次を確認する。
+追加解析、少数の混合main network実験、初期データcurriculumで次を確認する。
 
-1. categoryの強みが一時的なものか、学習とともに獲得・喪失する傾向か。
-2. KDA、Gated MLA、Transformerの配置順が分割品質に影響するか。
-3. 良い境界proxyが、実際のcategory別byte lossにも対応するか。
+1. architectureごとのcategory差が、成分比、配置順、seed、学習段階のどれに主に対応するか。
+2. KDA、Gated MLA、Transformerをどう組み合わせると、precision、coverage、category間の
+   バランス、lexeme fractureを改善できるか。
+3. encoder/decoderが高い学習率で境界を形成する初期に、整形済み・広分布データを与える
+   curriculumが分割の品質と安定性を改善するか。
+4. 良い境界proxyが、実際のcategory別byte lossにも対応するか。
+
+一般Transformerで報告された層別の言語情報を再確認すること自体は、本計画の目的ではない。
+また、0.23B bytes・220 stepの中規模学習から細かな機能分担を断定しない。ここで求めるのは、
+長期候補を絞るための粗い原因切り分けと、再現可能な改善方向である。
 
 ## 2. 既存checkpointで追加できる解析
 
@@ -62,15 +69,22 @@ encoder/router側の差を混同しにくくする。
 
 ## 3. 混合main network実験
 
-### 3.1 解釈上の注意
+### 3.1 検証対象
 
-「一般的なTransformerでは前層が文字・単語、後層が大きな構造を扱う」という傾向は、今回の
-model-level category表から直接は確認できない。現在のprobeは最終router境界を測り、各層の
-hidden representationを測っていないためである。
+目的は一般Transformerの層役割を再現することではなく、今回観測したmodel-levelのcategory差が
+なぜ生じたかを粗く切り分け、組合せにより指標を改善できるかを調べることである。
 
-それでも、局所処理に強い構成を前半、統合に強い構成を後半へ置く仮説は十分検証価値がある。
-配置効果と単なるlayer種類の比率を分けるため、同じ26 mixer blocks、同じK/G/T個数を持つ
-order controlを比較する。
+現在のprobeは最終router境界を測っているため、K1G1が助動詞・structuredに強いことから
+「K1G1は前半向き」、K3T1が活用に強いことから「K3T1は中盤向き」と直接結論できない。
+ただし、異なるmixerの帰納biasと配置順の相互作用がend-to-endの勾配を通じて境界学習へ影響する
+可能性はある。次の3要因を区別する。
+
+1. **成分効果**: K/G/Tを何層ずつ含むか。
+2. **順序効果**: 同じ成分をearly/middle/lateのどこへ置くか。
+3. **学習段階効果**: category差がstepとともに獲得・喪失されるか。
+
+中規模では各mixerが担う細かな言語機能を特定せず、同一成分のorder controlで順序効果が
+再現するかを主に確認する。
 
 ### 3.2 第一候補とorder control
 
@@ -78,7 +92,7 @@ uppercase blockはmixerとMLPを持つ。次の3構成はすべてK=13、G=4、T
 parameter数も互いに同じになる。
 
 1. **ordered**: `(K1G1)x4 → (K3T1)x3 → T6`
-   - ユーザー提案に対応する。K/G交互を前半、K中心+周期Tを中盤、Tを後半へ置く。
+   - category差を組み合わせる一つの仮説。一般Transformerの層役割を証明する構成ではない。
 2. **reverse**: `T6 → (K3T1)x3 → (K1G1)x4`
    - 同じ成分で順序だけを逆転する。
 3. **interleaved**: `(K1G1 K3T1 T2)x3 → K1G1`
@@ -91,42 +105,110 @@ parameter数も互いに同じになる。
 
 1. 3新構成をseed 42、step 55でscreeningする。
 2. BPB重大退行、圧縮率乖離、severe fragmentationがない構成だけstep 220へ進める。
-3. orderedがreverse/interleavedより一貫して良い場合だけseed 43、44を追加する。
+3. いずれかが他のorder controlより一貫して良い場合だけseed 43、44を追加する。
 4. 配置差が小さい場合、組合せ探索を増やさずK3G1/K3T1の長期比較へ戻る。
 
 主判定は全体aggregateだけでなく、活用、助動詞、助詞、文節、複合語、structuredの
 category trajectoryとnative頑健性で行う。
 
-## 4. 層ごとの役割を直接確認する評価
+## 4. Category差の粗い原因分析
 
-混合構成の仮説を検証するには、最終境界だけでなく層別表現を見る必要がある。
+大規模学習でないため、層ごとの細かな機能分担をlinear probeで断定することは目的にしない。
+代わりに、候補を増やしすぎない次の比較を行う。
 
-### 4.1 Layerwise linear probe
+### 4.1 同一成分の順序差
 
-各main-network層のhidden stateを保存し、独立した学習用annotationで次のoffset分類を行う。
+ordered/reverse/interleavedの差が3 seedで再現すれば配置順の寄与、差がなければ主に成分比または
+学習ノイズと判断する。1、2 categoryだけの勝ちではなく、aggregate、category macro、
+lexeme fracture、native頑健性が同方向に動くことを要求する。
 
-- UTF-8文字境界ではなく、語彙内部 / 形態素 / 助詞・助動詞 / 文節 / 句読点 / structured delimiter
-- 同じ88文をprobeの学習と評価へ兼用しない。
-- 各層のlinear probe F1とselectivityを比較する。
+### 4.2 Anchorからの局所置換
 
-これにより、前半で語・活用情報、後半で文節・構造情報が線形に読み出せるという仮説を直接
-検証できる。最終router境界のcategory差だけから層の役割を推定するより強い証拠になる。
+order screeningで差が出た場合だけ、K3G1またはK3T1のearly/middle/lateの一群を1回だけ
+別mixerへ置換する。複数箇所を同時に変えず、どの置換がcategory curveを変えたかを見る。
+parameter数が変わる場合はMLP幅を調整し、総parameter差を1%以内にする。
 
-### 4.2 Layer-group intervention
+### 4.3 補助的なgroup sensitivity
 
-early/middle/late groupの出力を小さくscaleする、または同一architecture内でgroupをfreezeして
-短い継続学習を行い、category別byte lossと境界確率の変化を測る。単純な推論時ablationでは
-分布外状態を作るため、linear probeを主、interventionを補助証拠とする。
+必要な場合だけ、early/middle/late groupの出力scaleを小さく変えた推論感度を測る。
+これは分布外interventionであり、機能局在の証明には使わない。新構成を学習する前に、
+影響がほぼない置換候補を除外するscreening用途に限定する。
 
-## 5. 境界proxy以外で追加すべき比較
+## 5. 初期境界学習用data curriculum
 
-### 5.1 Category別byte loss curve
+### 5.1 現行条件と仮説
+
+現行の中規模学習は外側から`lr_multipliers=[2.0, 1.5, 1.0]`を使い、outer/middleの
+encoder/decoder側がinnermost main networkより速く更新される。したがって初期データ分布が
+初期境界へ強く影響するという仮説には妥当性がある。
+
+ただし、高い学習率は後続データへの再適応も速くするため、初期データの影響が長く残るとは
+自動的には言えない。また、現行packed datasetはseed固定で全体shuffleされるため、物理的な
+元データの先頭を整えるだけではcurriculumにならない。明示的にphaseを分ける。
+
+静的tokenizerが本体より少量のデータで学習できることは参考になるが、H-Netの境界は
+言語モデルlossとcompression lossからend-to-endで変化する。必要量をtokenizerの慣例から
+決めず、境界指標の飽和から決める。
+
+### 5.2 初期データ
+
+初期phaseは品質だけで狭くせず、次を均等に近く含む整形済み・重複除去済みの広分布mixとする。
+
+- 日本語の説明文、対話、ニュース・百科事典調、活用と助詞が豊富な自然文。
+- 英語自然文。
+- code、identifier、path、URL。
+- JSON、YAML、XML、Markdown、tool call、複数turn agent trajectory。
+- 数値・単位、句読点、括弧、固有名詞を含む文。
+- 短文だけでなく、文書境界を保った複数文と中程度の長文。
+
+初期phaseでは、壊れたencoding、極端な反復、テンプレートboilerplate、途中切断されたtool列、
+単一domainの過剰比率を避ける。
+
+### 5.3 比較条件
+
+総raw bytesと各sourceの総量をそろえ、順序とLR scheduleを分離する。
+
+1. **mixed-from-start**: 現行の全体shuffle。基準条件。
+2. **curated-prefix**: 同じ総量のうち初期20--40M bytesを整形済み広分布mixにし、その後を
+   大量の通常mixへ切り替える。
+3. **curated-dispersed**: curated-prefixと同じcurated samplesを全期間へ分散する。
+   prefix効果と単なるデータ組成効果を分ける。
+4. **curated-prefix + outer-LR taper**: 境界安定後に倍率を例として`[1.2, 1.1, 1.0]`へ下げ、
+   main networkを中心に学習しつつencoder/decoderもわずかに更新する。
+
+最初はK3G1とK3T1のseed 42で比較する。curated-prefixが両方で同方向に改善した場合だけ、
+hybrid screeningへ同じcurriculumを適用する。
+
+### 5.4 phase移行条件
+
+固定stepだけでなく、次が2回連続のcheckpointで小さくなった時点をencoder/decoderの
+「落ち着いた」proxyとする。
+
+- central/nativeのboundary Jaccard変化。
+- category別precision/coverageとlexeme fractureの傾き。
+- boundary probabilityのtop-k cutoff margin。
+- native圧縮率とtarget gap。
+- outer/middle/mainのparameter update normまたはgradient norm。
+
+中規模screeningでは10M、20M、40M、60M raw bytes付近を観測し、20--40Mを初期候補とする。
+実測curveが飽和しなければ初期phaseを延長し、早く飽和すれば短縮する。
+
+### 5.5 実装上の注意
+
+現在のdatasetは単一packed dirを全体shuffleするため、段階dataset切替またはphase-aware samplerが
+必要である。checkpoint resumeはmodel、optimizer、step、data stateを保持できるが、optimizer
+load時のparameter-group倍率を含め、LR multiplier変更が意図どおり反映されることをunit testで
+確認する。optimizerをresetするとcurriculum以外の差が入るため、原則resetしない。
+
+## 6. 境界proxy以外で追加すべき比較
+
+### 6.1 Category別byte loss curve
 
 88文は境界galleryには適するがloss評価には小さい。日本語、英語、code、JSON/tool、長文の
 独立した固定validation shardを用意し、全checkpointでBPBを測る。境界categoryの強みが、
 該当データの予測しやすさへ結び付くかを確認する。
 
-### 5.2 Chunk系列の学習容易性proxy
+### 6.2 Chunk系列の学習容易性proxy
 
 以下を大量のheld-out文章で測る。
 
@@ -138,27 +220,29 @@ early/middle/late groupの出力を小さくscaleする、または同一archite
 「説明可能な境界は後続networkが学びやすい」という仮説に、88文のprecision/coverageより
 近いproxyになる。
 
-### 5.3 220 step以降の継続確認
+### 6.3 220 step以降の継続確認
 
 上位anchorとhybrid winnerだけをstep 440または880まで延長する。今回、境界の出現・消失が
 step 165→220でも続いたため、220 stepでのcategory順位が固定したとは言えない。延長時も
 同じraw-byte予算とcheckpoint間隔で比較する。
 
-### 5.4 長文・文脈距離
+### 6.4 長文・文脈距離
 
 単文中心の88文に加え、同じtarget spanを短文、複数文、tool trajectory中へ置く。targetから
 離れた前文だけを変え、境界確率がどの距離まで影響を受けるか測る。動的chunkの特徴を
 短い最小対だけでなく、実際の長文・agent文脈で確認する。
 
-## 6. 優先順位
+## 7. 優先順位
 
 追加中規模実験は次の順が費用対効果に優れる。
 
 1. 既存48結果のcategory trajectory、bootstrap、budget/native、stage間解析。
-2. 同一成分のordered/reverse/interleavedをseed 42・55 stepで比較。
-3. 独立validation shardのcategory別BPBと長文context probe。
-4. 勝者のみ3 seed・220 step、必要なら440/880 stepへ延長。
-5. layerwise linear probeで層配置仮説を直接検証。
+2. K3G1/K3T1でmixed-from-start、curated-prefix、curated-dispersedをseed 42で比較。
+3. 初期境界が改善した場合、outer-LR taperの有無を比較する。
+4. 採用curriculum上で同一成分のordered/reverse/interleavedをseed 42・55 stepで比較。
+5. 独立validation shardのcategory別BPBと長文context probeを併用する。
+6. 勝者のみ3 seed・220 step、必要なら440/880 stepへ延長する。
 
-この順序なら、category表から混合構成を大量生成することを避けつつ、配置順の仮説と
-長期学習候補の両方を中規模範囲で絞り込める。
+この順序なら、encoder/decoderが初期データへ適応する効果とmain networkの構成差を混同せず、
+category表から混合構成を大量生成することも避けられる。中規模で細かな機能局在を主張せず、
+長期学習へ持ち込む再現可能なdata scheduleとarchitectureを絞り込む。

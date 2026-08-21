@@ -2,6 +2,8 @@
 
 作成日: 2026-08-21
 
+保存先: `results/main_200m/`
+
 ## 1. 結論
 
 長期実験の第一候補を **K3G1**、比較を残す第二候補を **K3T1** とする。
@@ -148,6 +150,7 @@ K3G1との長期比較ではraw-byte予算に加えて実効圧縮率を必ず�
 - raw: Drive `evals/linguistic_boundary_phase2_v2/`
 - 集約CSV/JSON/gallery: Drive `reports/linguistic_boundary_selection/phase2_v2/`
 - trajectory分析: Drive `reports/linguistic_boundary_selection/phase2_v2/phase2_v2_analysis.json`
+- category別step推移: Drive `reports/linguistic_boundary_selection/phase2_v2/category_trajectory.json`
 - 実行status: Drive `manifests/linguistic_boundary_phase2_v2_evaluation_status.json`
 
 本評価は「言語的に説明可能な境界がmain networkの長期学習を助ける」という仮説に基づく

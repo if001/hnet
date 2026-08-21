@@ -82,8 +82,11 @@ UTF-8途中境界率はbyte-boundary-constraint依存なので順位に使わな
 まず既存4 checkpointから、categoryとfamilyの粗いtrajectoryを集計する。次に候補差が残る場合、
 上位2構成をseed 42で再学習し、次の二層で観測する。
 
-- dense core: categoryとfamilyを均等に含む16--24文を10 stepごとにnative/centralで評価
+- dense core: family 24文を10 stepごとにnativeで評価
 - full probe: 88文とfamily probeを55 stepごとにlow/central/high/nativeで評価
+
+学習中の実際の分割変化を見るdense coreはnativeを使い、構成間で境界予算を揃えるcentralは
+55 step checkpointで使う。高頻度に強制profileを全件実行する重複を避ける。
 
 時間軸はcumulative raw bytesを優先する。高頻度評価はtraining中のdeterministic hookで行い、
 training/eval modeと乱数状態を保存・復元する。評価挿入が学習trajectoryを変えないことをtestする。
@@ -127,6 +130,7 @@ modelごとの相補的category差がfamily・trajectory評価後にも再現し
 | family probe | `configs/linguistic_boundary_family_probe_v1.json` |
 | family集計実装 | `hnet/training/linguistic_boundary_families.py` |
 | trajectory集計実装 | `hnet/training/linguistic_boundary_trajectory.py` |
+| dense training runner | `scripts/run_dense_linguistic_training.py` |
 | 評価・集約CLI | `scripts/evaluate_linguistic_boundaries.py`, `scripts/summarize_linguistic_boundary_screening.py` |
 | unit test | `tests/unit/test_linguistic_boundary_families.py` |
 | raw評価 | Drive `evals/linguistic_boundary_family_v1/` |

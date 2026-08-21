@@ -1,10 +1,33 @@
 from __future__ import annotations
 
+import random
+from contextlib import contextmanager
 from typing import Any
 
+import numpy as np
 import torch
 
 from hnet.utils.tokenizers import ByteTokenizer
+
+
+@contextmanager
+def deterministic_model_evaluation(model: Any):
+    """Run evaluation without changing model mode or process RNG streams."""
+    was_training = bool(model.training)
+    python_state = random.getstate()
+    numpy_state = np.random.get_state()
+    torch_state = torch.get_rng_state()
+    cuda_states = torch.cuda.get_rng_state_all() if torch.cuda.is_available() else None
+    model.eval()
+    try:
+        yield
+    finally:
+        random.setstate(python_state)
+        np.random.set_state(numpy_state)
+        torch.set_rng_state(torch_state)
+        if cuda_states is not None:
+            torch.cuda.set_rng_state_all(cuda_states)
+        model.train(was_training)
 
 
 def decode_bytes(token_ids: list[int]) -> str:
@@ -93,6 +116,12 @@ def inspect_prompt_chunks(
 
     stage0_mask_tensor = output.bpred_output[0].boundary_mask[0].detach().cpu()
     stage1_mask_tensor = output.bpred_output[1].boundary_mask[0].detach().cpu()
+    stage0_probability = (
+        output.bpred_output[0].boundary_prob[0, :, 1].detach().float().cpu().tolist()
+    )
+    stage1_probability = (
+        output.bpred_output[1].boundary_prob[0, :, 1].detach().float().cpu().tolist()
+    )
 
     stage0_mask = [bool(v) for v in stage0_mask_tensor.tolist()]
     stage1_mask = [bool(v) for v in stage1_mask_tensor.tolist()]
@@ -127,7 +156,9 @@ def inspect_prompt_chunks(
         "token_ids": token_ids,
         "add_bos": add_bos,
         "stage0_mask": stage0_mask,
+        "stage0_boundary_probability": stage0_probability,
         "stage1_mask": stage1_mask,
+        "stage1_boundary_probability": stage1_probability,
         "stage0_boundaries": stage0_boundaries,
         "stage0_chunks": stage0_chunks,
         "stage1_boundary_indices_in_stage0": stage1_boundary_indices_in_stage0,

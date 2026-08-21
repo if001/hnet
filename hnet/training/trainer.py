@@ -18,7 +18,11 @@ from torch.utils.data import DataLoader
 from ..models.config_hnet import HNetConfig
 from ..models.config_io import load_hnet_config, save_hnet_config
 from ..models.mixer_seq import HNetForCausalLM
-from .chunking_utils import format_stage_compact, inspect_prompt_chunks
+from .chunking_utils import (
+    deterministic_model_evaluation,
+    format_stage_compact,
+    inspect_prompt_chunks,
+)
 from ..utils.train import group_params, load_balancing_loss
 from .config import DatasetSource, TrainingConfig
 from .freezing import apply_freeze_mode
@@ -598,24 +602,58 @@ def save_validation_chunk_reports(
         return None
 
     lines: list[str] = []
-    for index, prompt in enumerate(valid_prompts, start=1):
-        info = inspect_prompt_chunks(
-            model,
-            prompt,
-            add_bos=True,
-            utf8_hard=utf8_hard,
-        )
-        lines.append(f"[{index}/{len(valid_prompts)}]")
-        lines.append(f"Input prompt: {prompt}")
-        lines.append(f"stage0: {format_stage_compact(info['stage0_chunks'])}")
-        lines.append(f"stage1: {format_stage_compact(info['stage1_chunks'])}")
-        if index < len(valid_prompts):
-            lines.append("")
+    json_records: list[dict[str, Any]] = []
+    with deterministic_model_evaluation(model):
+        for index, prompt in enumerate(valid_prompts, start=1):
+            info = inspect_prompt_chunks(
+                model,
+                prompt,
+                add_bos=True,
+                utf8_hard=utf8_hard,
+            )
+            lines.append(f"[{index}/{len(valid_prompts)}]")
+            lines.append(f"Input prompt: {prompt}")
+            lines.append(f"stage0: {format_stage_compact(info['stage0_chunks'])}")
+            lines.append(f"stage1: {format_stage_compact(info['stage1_chunks'])}")
+            if index < len(valid_prompts):
+                lines.append("")
+            json_records.append(
+                {
+                    "index": index,
+                    "text": prompt,
+                    "token_ids": info["token_ids"],
+                    "stage0": {
+                        "boundary_positions": info["stage0_boundaries"],
+                        "boundary_probability": info[
+                            "stage0_boundary_probability"
+                        ],
+                    },
+                    "stage1": {
+                        "boundary_positions": info[
+                            "stage1_boundary_positions_in_input"
+                        ],
+                        "boundary_probability": info[
+                            "stage1_boundary_probability"
+                        ],
+                        "source_positions": info["stage0_boundaries"],
+                    },
+                }
+            )
 
     chunk_dir = output_dir / "validation_chunks"
     chunk_dir.mkdir(parents=True, exist_ok=True)
     save_path = chunk_dir / f"chunks_step_{step:06d}.txt"
     save_path.write_text("\n".join(lines) + "\n", encoding="utf-8")
+    json_path = chunk_dir / f"chunks_step_{step:06d}.json"
+    json_path.write_text(
+        json.dumps(
+            {"version": 1, "step": step, "records": json_records},
+            ensure_ascii=False,
+            indent=2,
+        )
+        + "\n",
+        encoding="utf-8",
+    )
     return save_path
 
 

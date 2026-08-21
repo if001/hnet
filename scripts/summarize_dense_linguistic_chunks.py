@@ -91,6 +91,8 @@ def main() -> None:
             "seed": args.seed,
             "checkpoint_label": f"step{step}-dense-native-v1",
             "cumulative_input_bytes": cumulative_bytes[step],
+            "byte_boundary_constraint": "utf8-hard",
+            "byte_boundary_constraint_bias": 0.0,
             "probe_path": str(args.probe),
             "records": output_records,
         }

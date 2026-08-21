@@ -55,7 +55,9 @@ def aggregate_scores(runs: list[dict[str, Any]]) -> list[dict[str, Any]]:
                         "model_name": run["model_name"],
                         "seed": run.get("seed"),
                         "checkpoint_label": run.get("checkpoint_label"),
-                        "constraint": run["byte_boundary_constraint"],
+                        "constraint": run.get(
+                            "byte_boundary_constraint", "unspecified"
+                        ),
                         "source_path": run["_source_path"],
                     }
 
@@ -202,11 +204,20 @@ def write_gallery(path: Path, runs: list[dict[str, Any]]) -> None:
             run.get("checkpoint_label") or "",
         ),
     )
+    primary_condition = (
+        "central"
+        if all(
+            "central" in record["conditions"]
+            for run in ordered
+            for record in run["records"]
+        )
+        else "native"
+    )
     lines = [
         "# Linguistic boundary blind gallery",
         "",
         "Candidate mapping is intentionally listed only at the end of the file.",
-        "Primary inspection condition: `central`.",
+        f"Primary inspection condition: `{primary_condition}`.",
         "",
     ]
     record_ids = [record["id"] for record in ordered[0]["records"]]
@@ -226,13 +237,17 @@ def write_gallery(path: Path, runs: list[dict[str, Any]]) -> None:
         )
         for index, run in enumerate(ordered):
             record = next(item for item in run["records"] if item["id"] == record_id)
-            central = record["conditions"]["central"]
+            condition = record["conditions"][primary_condition]
+            stage0 = condition["stage0"]
+            stage1 = condition["stage1"]
+            stage0_display = stage0.get("chunks", stage0["boundary_positions"])
+            stage1_display = stage1.get("chunks", stage1["boundary_positions"])
             lines.extend(
                 [
                     f"### {masked_label(index)}",
                     "",
-                    f"- stage0: `{central['stage0']['chunks']}`",
-                    f"- stage1: `{central['stage1']['chunks']}`",
+                    f"- stage0: `{stage0_display}`",
+                    f"- stage1: `{stage1_display}`",
                     "",
                 ]
             )

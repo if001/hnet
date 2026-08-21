@@ -79,11 +79,20 @@ UTF-8途中境界率はbyte-boundary-constraint依存なので順位に使わな
 
 ### Phase M2: trajectory再集計
 
-まず既存4 checkpointから、categoryとfamilyの粗いtrajectoryを集計する。次に候補差が残る場合、
-上位2構成をseed 42で再学習し、次の二層で観測する。
+ここでいうcategory評価は、既存の11 category x 8文の88文probeを指す。family probe内の
+`inflection`、`compound`、`context_control`だけをcategory評価の代用にしない。
+
+まずK1G1、K3G1、K3T1、T26の全4候補について、88文category probeと24文family probeを統合した
+112文を、seed 42/43/44、step 55/110/165/220、low/central/high/nativeで評価する。既存rawを再利用する
+場合は、checkpoint、学習設定、compression target、constraint、profile定義が一致することをmetadataで
+確認する。一致しない組合せだけ再評価する。
+
+112文のcategory precision/coverage/fractureとfamily landmark coverage/integrity/context consistencyを
+単一スコアにせずPareto比較し、その後にdense対象を1--3構成へ絞る。family指標だけでK3G1やT26を
+除外しない。候補差が残る場合、選定構成をseed 42で再学習し、次の二層で観測する。
 
 - dense core: family 24文を10 stepごとにnativeで評価
-- full probe: 88文とfamily probeを55 stepごとにlow/central/high/nativeで評価
+- full probe: 統合112文を55 stepごとにlow/central/high/nativeで評価
 
 学習中の実際の分割変化を見るdense coreはnativeを使い、構成間で境界予算を揃えるcentralは
 55 step checkpointで使う。高頻度に強制profileを全件実行する重複を避ける。
@@ -92,7 +101,8 @@ UTF-8途中境界率はbyte-boundary-constraint依存なので順位に使わな
 training/eval modeと乱数状態を保存・復元する。評価挿入が学習trajectoryを変えないことをtestする。
 
 seed 42で候補差が見えなければdense再学習を増やさない。差があるがseed依存を否定できない場合だけ
-seed 43/44を追加する。
+seed 43/44を追加する。既に実施したK1G1/K3T1のdense結果は保持するが、112文の4候補比較より先に
+行った暫定結果として扱い、dense対象選定の根拠には使用しない。
 
 ### Phase M3: 構成比較
 

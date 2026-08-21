@@ -11,8 +11,8 @@ category別precision/coverageもstepとともに変化した。長期実験へ�
 1. architectureごとのcategory差が、成分比、配置順、seed、学習段階のどれに主に対応するか。
 2. KDA、Gated MLA、Transformerをどう組み合わせると、precision、coverage、category間の
    バランス、lexeme fractureを改善できるか。
-3. encoder/decoderが高い学習率で境界を速く学ぶ初期に、整形済み・広分布データを与えると、
-   後続分布へ適応しながら利用できる境界の基盤が形成されるか。
+3. encoder/decoderの境界が学習中にどの程度揺れ、説明可能な複数分割間の移動と、
+   説明困難な分割への不安定化を区別できるか。
 4. 良い境界proxyが、実際のcategory別byte lossにも対応するか。
 
 一般Transformerで報告された層別の言語情報を再確認すること自体は、本計画の目的ではない。
@@ -66,6 +66,42 @@ encoder/router側の差を混同しにくくする。
 現在の完全signature passはstep 220で全候補0/6となり、差を検出できなかった。完全一致ではなく、
 事前指定した許容offsetのboundary probabilityが文脈によりどちらへ動くかをpaired effect sizeで
 評価する。文脈だけを変えた最小対を増やし、seedをまたいだ方向一致率を併記する。
+
+### 2.5 Dense boundary trajectory
+
+step 55/110/165/220は粗い方向確認には使えるが、特定の分割が維持されたか、許容分割間を
+移動したかを判定するには疎すぎる。固定probeを同じ推論条件で5または10 stepごとに評価し、
+離散boundary maskだけでなく全offsetのboundary probabilityを保存する。
+
+88文すべてを高頻度で評価すると費用が大きいため、次の二層に分ける。
+
+- **dense core**: categoryを均等に含む22文を5--10 stepごとにnative/centralで評価する。
+- **full probe**: 88文を25--55 stepごとにlow/central/high/nativeで評価する。
+
+checkpointを毎回保存せず、training中のdeterministic evaluation hookで小さいprobability JSONを
+保存する。stepではなくcumulative raw bytesを時間軸にする。hookは`inference_mode`で実行し、
+training/eval modeと乱数状態を保存・復元して、評価挿入自体が学習trajectoryを変えないことを
+unit testで確認する。
+
+各focus spanで次を集計する。
+
+- **acceptable occupancy**: 各許容offsetがlate-window内で選ばれた比率。
+- **unexplained / fracture occupancy**: 説明困難境界とlexeme fractureが選ばれた時間比率。
+- **segmentation transition**: `分|割する`、`分割|する`などpattern間の遷移回数、滞在時間、再出現。
+- **acceptable probability margin**: 許容offset確率と保護語彙内部offset確率の差。
+- **temporal Jaccard / rank correlation**: 連続時点のmask一致度とprobability順位相関。
+- **late-window mean and variance**: 最終1点ではなく、最後の50--100M bytesの平均と分散。
+- **time-averaged precision/coverage**: 全学習区間とlate-windowを分けたcurve下面積。
+
+分割が変化すること自体を悪いとしない。次を区別する。
+
+1. **有益な揺れ**: 複数の許容分割間を移動し、unexplained/fracture occupancyが低い。
+2. **有害な揺れ**: 説明困難・語彙内部分割へ頻繁に移動し、marginも低い。
+3. **安定した誤り**: Jaccardは高いが、不自然な分割へ長く滞在する。
+4. **収束傾向**: late-windowで有害遷移と分散が減り、許容offsetの占有率が上がる。
+
+モデル比較は最終stepのpatternではなく、late-windowのacceptable occupancy、fracture occupancy、
+precision/coverage平均、pattern entropy、seed間のtrajectory分布で行う。
 
 ## 3. 混合main network実験
 
@@ -134,7 +170,7 @@ parameter数が変わる場合はMLP幅を調整し、総parameter差を1%以内
 これは分布外interventionであり、機能局在の証明には使わない。新構成を学習する前に、
 影響がほぼない置換候補を除外するscreening用途に限定する。
 
-## 5. 初期境界学習用data curriculum
+## 5. 保留: 初期境界学習用data curriculum
 
 ### 5.1 元論文、現行条件、仮説
 
@@ -147,8 +183,9 @@ outer stageの高い学習率がchunking mechanismの学習を加速すると経
 - ICLR 2026版: <https://openreview.net/forum?id=ZbfLR9NbNF>
 
 現行の中規模学習は外側から`lr_multipliers=[2.0, 1.5, 1.0]`を使い、outer/middleの
-encoder/decoder側がinnermost main networkより速く更新される。この条件から立てる仮説は
-「最初の境界が残る」ではなく、次のようにする。
+encoder/decoder側がinnermost main networkより速く更新される。ただし、clean初期データが
+再利用可能な境界基盤を形成するという仮説は、dense trajectoryで通常学習の境界変動を確認するまで
+保留する。実行を決定した場合の仮説候補は次のとおりである。
 
 1. 初期の整形済み・広分布データにより、多くのdomainで再利用できる境界確率の基盤が速く形成される。
 2. 学習が進むと完全に固定されるのではなく、基盤の一部を維持しながら現在のデータ分布に合うよう
@@ -272,13 +309,14 @@ step 165→220でも続いたため、220 stepでのcategory順位が固定し�
 追加中規模実験は次の順が費用対効果に優れる。
 
 1. 既存48結果のcategory trajectory、bootstrap、budget/native、stage間解析。
-2. architectureをK3G1に固定し、同一データmultisetのnormal-shuffleとclean-firstをseed 42で比較。
-3. 差があればseed 43、44で再現し、base formation / retention / adaptive movementを確認する。
-4. 初期順序効果が再現した後だけ、outer-LR taperを独立に比較する。
-5. 採用data order上で同一成分のordered/reverse/interleavedを比較する。
+2. architectureをK3G1に固定し、dense coreを5--10 step、full probeを25--55 step間隔で追跡する。
+3. late-window occupancy、遷移、margin、時間平均precision/coverageをseed 42で確認する。
+4. trajectoryがseed依存ならseed 43、44を追加する。
+5. 同一成分のordered/reverse/interleavedを同じdense評価で比較する。
 6. 独立validation shardのcategory別BPBと長文context probeを併用する。
-7. 勝者のみ220 step以降へ延長する。
+7. clean-first curriculumは通常学習のtrajectoryを理解した後に再検討する。
+8. 勝者のみ220 step以降へ延長する。
 
-この順序なら、初期に形成された境界が固定されると仮定せず、共通基盤の形成と現在分布への適応を
-同時に評価できる。また、encoder/decoderのdata-order効果とmain networkの構成差を混同せず、
-長期学習へ持ち込む再現可能なdata scheduleとarchitectureを絞り込める。
+この順序なら、疎なsnapshotを安定した分割戦略と誤認せず、説明可能な揺れと有害な揺れを区別できる。
+clean初期データの効果を先に仮定せず、通常学習の時間変化を理解してからdata orderとarchitectureを
+評価できる。

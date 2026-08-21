@@ -19,6 +19,8 @@ MODEL_CONFIGS = {
     "k1g1": "configs/hnet_2stage_200m_k1g1.json",
     "k3t1": "configs/hnet_2stage_200m_k3t1.json",
     "k3g1": "configs/hnet_2stage_200m_k3g1.json",
+    "k1first_mix": "configs/hnet_2stage_200m_k1first_mix.json",
+    "k3first_mix": "configs/hnet_2stage_200m_k3first_mix.json",
 }
 PROBES = [
     "彼女はいま笑っている。",

@@ -134,3 +134,48 @@ step 220 centralでK3G1は文節precision/coverage 0.636/0.609、K1G1は0.065/0.
 - 実行manifest: Drive `manifests/dense_full112_v1_status.json`
 - analysis: `combined112_analysis.json`、`dense_full112_analysis.json`
 
+## 9. ここまでに分かったこと
+
+### 9.1 構成ごとの強み
+
+K1G1はfamily probe、landmark、助動詞、助詞、複合語、structured categoryで強く、
+low/central/highの境界予算を変えても比較的安定していた。fractureが少なく、学習中の
+family指標も他の構成より維持された。K3G1はcategory precisionと文節で強い一方、学習後半の
+強制profileでfamily landmarkが選ばれにくくなった。native categoryではK1G1と近いため、
+これは単に境界数が少ないことでは説明できない。
+
+K3T1はstep 55のfamilyが強いが、step 110以後に低下し、強みが維持されなかった。T26は
+今回の境界評価軸でK1G1に対する独立した優位点を示さなかった。そのため、最初の混合実験は
+K1G1とK3G1に絞る。
+
+### 9.2 強みの発生理由についての解釈
+
+K1G1とK3G1はKDAとGated MLAという同じ種類のmain-network layerを使うが、配置頻度が異なる。
+K1G1は両者を交互に配置し、K3G1はKDAを3層続けてからGated MLAを配置する。観測結果と
+整合する仮説は次の通りである。
+
+- K1G1の頻繁なKDA/Gated MLAの切り替えは、異なる語形や文脈で再利用できる活用・助詞・
+  複合語境界を、outer-stageのboundary predictorが安定して上位に順位付けする学習と関連している。
+- K3G1の連続KDA区間は文節のようなやや長いまとまりに適応する学習と関連するが、familyで
+  共通する形態的landmarkを固定境界予算の上位に維持しにくい。
+- K3G1でcategoryが改善する一方でfamilyが低下し、K3T1の初期優位も消えたことから、強みは
+  固定された層の能力だけでなく、main networkとencoder/decoder・boundary predictorの共適応によって
+  形成される。
+
+ただし、以上は結果と整合する仮説であり、層ごとの表現や勾配を直接測定した因果説明ではない。
+境界はouter stageが出力するため、特定のmain-network layerが直接文節や助詞を検出したとは結論しない。
+
+### 9.3 混合構成について分かった範囲
+
+K1G1のfamily・複数category・低fractureと、K3G1の文節・category precisionに相補性があるため、
+K1G1を基盤にK3G1型の連続KDA区間を部分的に入れる方向は次の検証対象になる。一方、
+現在の観測だけでは、前半と後半のどちらに連続KDA区間を置くべきかは分からない。
+
+次の実験では26層、KDA 16層、Gated MLA 10層を共通にし、`K1G1 x 7 -> K3G1 x 3`と
+`K3G1 x 3 -> K1G1 x 7`の配置順だけを反転する。両者の差は層位置の影響、両者に共通する
+親構成からの変化はK/G比率を中間化した影響の手がかりとする。実験前に分かったのはこの
+検証可能な構成仮説までであり、最適な配置は未確定である。
+
+混合の成功は単一のaggregate scoreではなく、K1G1のfamily coverage、landmark、助動詞、助詞、
+structured、fractureを維持しながら、K3G1の文節precision/coverageに近づくかというPareto改善で
+判定する。

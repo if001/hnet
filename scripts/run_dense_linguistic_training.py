@@ -27,11 +27,26 @@ OUTER_COMPRESSION_TARGETS = {
     "k1g1": 2.5,
     "k3g1": 2.5,
     "k3t1": 3.0,
+    "k1first_mix": 2.5,
+    "k3first_mix": 2.5,
 }
 
 
-def run_name(main_network: str, seed: int, commit: str) -> str:
-    return f"r6_dense_family_v1_{main_network}_s{seed}_step220_{commit[:7]}"
+def checkpoint_steps(max_steps: int) -> tuple[int, ...]:
+    return tuple(step for step in CHECKPOINT_STEPS if step <= max_steps)
+
+
+def dense_steps(max_steps: int) -> tuple[int, ...]:
+    return tuple(range(10, max_steps + 1, 10))
+
+
+def run_name(
+    main_network: str, seed: int, commit: str, max_steps: int = 220
+) -> str:
+    return (
+        f"r6_dense_family_v1_{main_network}_s{seed}_"
+        f"step{max_steps}_{commit[:7]}"
+    )
 
 
 def parse_args() -> argparse.Namespace:
@@ -40,6 +55,7 @@ def parse_args() -> argparse.Namespace:
         "--main", choices=sorted(OUTER_COMPRESSION_TARGETS), required=True
     )
     parser.add_argument("--seed", type=int, default=42)
+    parser.add_argument("--max-steps", type=int, choices=[55, 220], default=220)
     parser.add_argument("--packed-data-dir", type=Path, required=True)
     parser.add_argument("--packed-validation-data-dir", type=Path, required=True)
     parser.add_argument(
@@ -71,7 +87,7 @@ def main() -> None:
         raise ValueError("dense family probe must contain 24 unique texts")
 
     commit = git_output("rev-parse", "HEAD")
-    name = run_name(args.main, args.seed, commit)
+    name = run_name(args.main, args.seed, commit, args.max_steps)
     run_dir = args.work_root / "runs" / name
     archive_dir = args.archive_root / name
     if run_dir.exists() or archive_dir.exists():
@@ -96,7 +112,7 @@ def main() -> None:
         "--grad-accum-steps",
         "32",
         "--max-steps",
-        "220",
+        str(args.max_steps),
         "--learning-rate",
         "0.00035",
         "--min-learning-rate",
@@ -152,12 +168,12 @@ def main() -> None:
 
     checkpoints = sorted(run_dir.glob("checkpoint_step_*.pt"))
     if [path.name for path in checkpoints] != [
-        f"checkpoint_step_{step:06d}.pt" for step in CHECKPOINT_STEPS
+        f"checkpoint_step_{step:06d}.pt" for step in checkpoint_steps(args.max_steps)
     ]:
         raise RuntimeError("dense run checkpoint set is incomplete")
     chunk_reports = sorted((run_dir / "validation_chunks").glob("chunks_step_*.json"))
     observed_steps = tuple(int(path.stem.split("_")[-1]) for path in chunk_reports)
-    if observed_steps != DENSE_STEPS:
+    if observed_steps != dense_steps(args.max_steps):
         raise RuntimeError(f"dense chunk steps are incomplete: {observed_steps}")
 
     raw_dir = run_dir / "dense_raw"

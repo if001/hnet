@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import shutil
 import subprocess
 import sys
 from pathlib import Path
@@ -50,6 +51,29 @@ def run_name(
     )
 
 
+def copy_resume_artifacts(source: Path, destination: Path) -> Path:
+    checkpoint = source / "checkpoint_step_000055.pt"
+    chunks = source / "validation_chunks"
+    required_files = (
+        checkpoint,
+        source / "training_metrics.csv",
+        source / "validation_metrics.csv",
+    )
+    if not all(path.is_file() for path in required_files) or not chunks.is_dir():
+        raise FileNotFoundError(f"Incomplete dense resume source: {source}")
+    observed = tuple(
+        int(path.stem.split("_")[-1])
+        for path in sorted(chunks.glob("chunks_step_*.json"))
+    )
+    if observed != dense_steps(55):
+        raise RuntimeError(f"Resume source dense steps are incomplete: {observed}")
+    destination.mkdir(parents=True)
+    for path in required_files:
+        shutil.copy2(path, destination / path.name)
+    shutil.copytree(chunks, destination / "validation_chunks")
+    return destination / checkpoint.name
+
+
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Run dense family-boundary training.")
     parser.add_argument(
@@ -57,6 +81,11 @@ def parse_args() -> argparse.Namespace:
     )
     parser.add_argument("--seed", type=int, default=42)
     parser.add_argument("--max-steps", type=int, choices=[55, 220], default=220)
+    parser.add_argument(
+        "--resume-run-dir",
+        type=Path,
+        help="Completed 55-step dense run whose optimizer/data state is resumed.",
+    )
     parser.add_argument("--packed-data-dir", type=Path, required=True)
     parser.add_argument("--packed-validation-data-dir", type=Path, required=True)
     parser.add_argument(
@@ -93,7 +122,13 @@ def main() -> None:
     archive_dir = args.archive_root / name
     if run_dir.exists() or archive_dir.exists():
         raise FileExistsError(f"Refusing to overwrite existing run: {name}")
-    run_dir.mkdir(parents=True)
+    if args.resume_run_dir is not None:
+        if args.max_steps != 220:
+            raise ValueError("--resume-run-dir requires --max-steps 220")
+        resume_checkpoint = copy_resume_artifacts(args.resume_run_dir, run_dir)
+    else:
+        run_dir.mkdir(parents=True)
+        resume_checkpoint = None
 
     command = [
         sys.executable,
@@ -149,6 +184,8 @@ def main() -> None:
         "--num-workers",
         "0",
     ]
+    if resume_checkpoint is not None:
+        command.extend(["--resume-from-checkpoint", str(resume_checkpoint)])
     for prompt in prompts:
         command.extend(["--chunk-prompt", prompt])
     (run_dir / "dense_run_config.json").write_text(
@@ -159,6 +196,9 @@ def main() -> None:
                 "main": args.main,
                 "seed": args.seed,
                 "probe": str(args.probe),
+                "resume_run_dir": (
+                    str(args.resume_run_dir) if args.resume_run_dir is not None else None
+                ),
                 "command": command,
             },
             ensure_ascii=False,

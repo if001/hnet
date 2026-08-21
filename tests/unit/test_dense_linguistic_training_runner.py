@@ -3,6 +3,7 @@ from scripts.run_dense_linguistic_training import (
     LR_SCHEDULE_STEPS,
     OUTER_COMPRESSION_TARGETS,
     checkpoint_steps,
+    copy_resume_artifacts,
     dense_steps,
     run_name,
 )
@@ -35,3 +36,22 @@ def test_dense_run_name_supports_screening_length() -> None:
     assert run_name("k1first_mix", 42, "abcdef0123", 55) == (
         "r6_dense_family_v1_k1first_mix_s42_step55_abcdef0"
     )
+
+
+def test_copy_resume_artifacts_requires_complete_step55_run(tmp_path) -> None:
+    source = tmp_path / "source"
+    source.mkdir()
+    (source / "checkpoint_step_000055.pt").write_bytes(b"checkpoint")
+    (source / "training_metrics.csv").write_text("step\n55\n", encoding="utf-8")
+    (source / "validation_metrics.csv").write_text("step\n", encoding="utf-8")
+    chunks = source / "validation_chunks"
+    chunks.mkdir()
+    for step in dense_steps(55):
+        (chunks / f"chunks_step_{step:06d}.json").write_text("{}", encoding="utf-8")
+
+    destination = tmp_path / "destination"
+    checkpoint = copy_resume_artifacts(source, destination)
+
+    assert checkpoint == destination / "checkpoint_step_000055.pt"
+    assert checkpoint.read_bytes() == b"checkpoint"
+    assert len(list((destination / "validation_chunks").glob("*.json"))) == 5

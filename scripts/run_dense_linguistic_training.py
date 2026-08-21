@@ -23,6 +23,11 @@ from scripts.run_boundary_calibration import (
 
 CHECKPOINT_STEPS = (55, 110, 165, 220)
 DENSE_STEPS = tuple(range(10, 221, 10))
+OUTER_COMPRESSION_TARGETS = {
+    "k1g1": 2.5,
+    "k3g1": 2.5,
+    "k3t1": 3.0,
+}
 
 
 def run_name(main_network: str, seed: int, commit: str) -> str:
@@ -31,7 +36,9 @@ def run_name(main_network: str, seed: int, commit: str) -> str:
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Run dense family-boundary training.")
-    parser.add_argument("--main", choices=["k1g1", "k3t1"], required=True)
+    parser.add_argument(
+        "--main", choices=sorted(OUTER_COMPRESSION_TARGETS), required=True
+    )
     parser.add_argument("--seed", type=int, default=42)
     parser.add_argument("--packed-data-dir", type=Path, required=True)
     parser.add_argument("--packed-validation-data-dir", type=Path, required=True)
@@ -111,7 +118,7 @@ def main() -> None:
         "--compression-ratio",
         "3.0",
         "--compression-ratio",
-        "2.5" if args.main == "k1g1" else "3.0",
+        str(OUTER_COMPRESSION_TARGETS[args.main]),
         "--lr-multiplier",
         "2",
         "--lr-multiplier",

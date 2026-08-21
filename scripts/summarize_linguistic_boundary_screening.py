@@ -3,10 +3,18 @@ from __future__ import annotations
 import argparse
 import csv
 import json
+import sys
 from collections import defaultdict
 from pathlib import Path
 from statistics import mean
 from typing import Any, Iterable
+
+REPOSITORY_ROOT = Path(__file__).resolve().parents[1]
+if str(REPOSITORY_ROOT) not in sys.path:
+    sys.path.insert(0, str(REPOSITORY_ROOT))
+
+from hnet.training.linguistic_boundary_families import summarize_family_scores
+from hnet.training.linguistic_boundary_trajectory import summarize_trajectory_scores
 
 
 def parse_args() -> argparse.Namespace:
@@ -22,7 +30,7 @@ def load_runs(paths: Iterable[Path]) -> list[dict[str, Any]]:
     runs = []
     for path in paths:
         payload = json.loads(path.read_text(encoding="utf-8"))
-        if payload.get("version") not in {1, 2}:
+        if payload.get("version") not in {1, 2, 3}:
             raise ValueError(f"unsupported result version in {path}")
         payload["_source_path"] = str(path)
         runs.append(payload)
@@ -243,9 +251,16 @@ def main() -> None:
     runs = load_runs(args.input)
     score_rows = aggregate_scores(runs)
     pair_rows = pair_scores(runs)
+    family_rows, landmark_rows = summarize_family_scores(runs)
+    trajectory_rows = summarize_trajectory_scores(runs)
     args.output_dir.mkdir(parents=True, exist_ok=True)
     write_csv(args.output_dir / "linguistic_boundary_scores.csv", score_rows)
     write_csv(args.output_dir / "linguistic_boundary_pairs.csv", pair_rows)
+    write_csv(args.output_dir / "linguistic_boundary_families.csv", family_rows)
+    write_csv(
+        args.output_dir / "linguistic_boundary_family_landmarks.csv", landmark_rows
+    )
+    write_csv(args.output_dir / "linguistic_boundary_trajectory.csv", trajectory_rows)
     write_gallery(args.output_dir / "linguistic_boundary_blind_gallery.md", runs)
     summary = {
         "version": max(int(run["version"]) for run in runs),
@@ -253,6 +268,9 @@ def main() -> None:
         "inputs": [run["_source_path"] for run in runs],
         "score_rows": score_rows,
         "pair_rows": pair_rows,
+        "family_rows": family_rows,
+        "landmark_rows": landmark_rows,
+        "trajectory_rows": trajectory_rows,
     }
     (args.output_dir / "linguistic_boundary_summary.json").write_text(
         json.dumps(summary, ensure_ascii=False, indent=2) + "\n", encoding="utf-8"

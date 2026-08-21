@@ -1,0 +1,136 @@
+{
+  "version": 3,
+  "description": "Japanese boundary-family probe for paradigm, lexical reuse, and context-control consistency.",
+  "budget_profiles": [
+    {"id": "low_compression", "stage0_units_per_chunk": 2.5, "stage1_units_per_chunk": 2.5},
+    {"id": "central", "stage0_units_per_chunk": 3.0, "stage1_units_per_chunk": 3.0},
+    {"id": "high_compression", "stage0_units_per_chunk": 3.5, "stage1_units_per_chunk": 3.5}
+  ],
+  "records": [
+    {
+      "id": "family-split-present", "category": "inflection", "text": "長い文書を段落ごとに分割する。",
+      "focus": {"surface": "分割する", "occurrence": 0, "acceptable_segmentations": ["分割|する"], "protected_substrings": ["分割"]},
+      "family": {"group": "split-suru-paradigm", "kind": "paradigm", "landmarks": [{"name": "lexeme_suffix", "segmentation": "分割|する"}]}
+    },
+    {
+      "id": "family-split-past", "category": "inflection", "text": "昨日、長い文書を三つに分割した。",
+      "focus": {"surface": "分割した", "occurrence": 0, "acceptable_segmentations": ["分割|した"], "protected_substrings": ["分割"]},
+      "family": {"group": "split-suru-paradigm", "kind": "paradigm", "landmarks": [{"name": "lexeme_suffix", "segmentation": "分割|した"}]}
+    },
+    {
+      "id": "family-split-progressive", "category": "inflection", "text": "現在、大きなファイルを自動で分割している。",
+      "focus": {"surface": "分割している", "occurrence": 0, "acceptable_segmentations": ["分割|している", "分割して|いる"], "protected_substrings": ["分割"]},
+      "family": {"group": "split-suru-paradigm", "kind": "paradigm", "landmarks": [{"name": "lexeme_suffix", "segmentation": "分割|している"}]}
+    },
+    {
+      "id": "family-split-passive", "category": "inflection", "text": "入力データは複数の領域に分割される。",
+      "focus": {"surface": "分割される", "occurrence": 0, "acceptable_segmentations": ["分割|される"], "protected_substrings": ["分割"]},
+      "family": {"group": "split-suru-paradigm", "kind": "paradigm", "landmarks": [{"name": "lexeme_suffix", "segmentation": "分割|される"}]}
+    },
+
+    {
+      "id": "family-change-present", "category": "inflection", "text": "必要なら設定を変更する。",
+      "focus": {"surface": "変更する", "occurrence": 0, "acceptable_segmentations": ["変更|する"], "protected_substrings": ["変更"]},
+      "family": {"group": "change-suru-paradigm", "kind": "paradigm", "landmarks": [{"name": "lexeme_suffix", "segmentation": "変更|する"}]}
+    },
+    {
+      "id": "family-change-past", "category": "inflection", "text": "実験の前に設定を変更した。",
+      "focus": {"surface": "変更した", "occurrence": 0, "acceptable_segmentations": ["変更|した"], "protected_substrings": ["変更"]},
+      "family": {"group": "change-suru-paradigm", "kind": "paradigm", "landmarks": [{"name": "lexeme_suffix", "segmentation": "変更|した"}]}
+    },
+    {
+      "id": "family-change-negative", "category": "inflection", "text": "既定の設定はまだ変更していない。",
+      "focus": {"surface": "変更していない", "occurrence": 0, "acceptable_segmentations": ["変更|していない", "変更して|いない"], "protected_substrings": ["変更"]},
+      "family": {"group": "change-suru-paradigm", "kind": "paradigm", "landmarks": [{"name": "lexeme_suffix", "segmentation": "変更|していない"}]}
+    },
+    {
+      "id": "family-change-potential", "category": "inflection", "text": "管理者だけがこの値を変更できる。",
+      "focus": {"surface": "変更できる", "occurrence": 0, "acceptable_segmentations": ["変更|できる"], "protected_substrings": ["変更"]},
+      "family": {"group": "change-suru-paradigm", "kind": "paradigm", "landmarks": [{"name": "lexeme_suffix", "segmentation": "変更|できる"}]}
+    },
+
+    {
+      "id": "family-laugh-progressive", "category": "inflection", "text": "彼女は冗談を聞いて笑っている。",
+      "focus": {"surface": "笑っている", "occurrence": 0, "acceptable_segmentations": ["笑|っている", "笑って|いる"]},
+      "family": {"group": "laugh-paradigm", "kind": "paradigm", "landmarks": [{"name": "stem_suffix", "segmentation": "笑|っている"}]}
+    },
+    {
+      "id": "family-laugh-past", "category": "inflection", "text": "写真の中で子供が笑った。",
+      "focus": {"surface": "笑った", "occurrence": 0, "acceptable_segmentations": ["笑|った"]},
+      "family": {"group": "laugh-paradigm", "kind": "paradigm", "landmarks": [{"name": "stem_suffix", "segmentation": "笑|った"}]}
+    },
+    {
+      "id": "family-laugh-negative", "category": "inflection", "text": "彼はその冗談では笑わない。",
+      "focus": {"surface": "笑わない", "occurrence": 0, "acceptable_segmentations": ["笑|わない"]},
+      "family": {"group": "laugh-paradigm", "kind": "paradigm", "landmarks": [{"name": "stem_suffix", "segmentation": "笑|わない"}]}
+    },
+    {
+      "id": "family-laugh-potential", "category": "inflection", "text": "今なら失敗も笑える。",
+      "focus": {"surface": "笑える", "occurrence": 0, "acceptable_segmentations": ["笑|える"]},
+      "family": {"group": "laugh-paradigm", "kind": "paradigm", "landmarks": [{"name": "stem_suffix", "segmentation": "笑|える"}]}
+    },
+
+    {
+      "id": "family-write-progressive", "category": "inflection", "text": "学生が机で報告書を書いている。",
+      "focus": {"surface": "書いている", "occurrence": 0, "acceptable_segmentations": ["書|いている", "書いて|いる"]},
+      "family": {"group": "write-paradigm", "kind": "paradigm", "landmarks": [{"name": "stem_suffix", "segmentation": "書|いている"}]}
+    },
+    {
+      "id": "family-write-past", "category": "inflection", "text": "昨日、担当者が報告書を書いた。",
+      "focus": {"surface": "書いた", "occurrence": 0, "acceptable_segmentations": ["書|いた"]},
+      "family": {"group": "write-paradigm", "kind": "paradigm", "landmarks": [{"name": "stem_suffix", "segmentation": "書|いた"}]}
+    },
+    {
+      "id": "family-write-negative", "category": "inflection", "text": "今日は日記を書かない。",
+      "focus": {"surface": "書かない", "occurrence": 0, "acceptable_segmentations": ["書|かない"]},
+      "family": {"group": "write-paradigm", "kind": "paradigm", "landmarks": [{"name": "stem_suffix", "segmentation": "書|かない"}]}
+    },
+    {
+      "id": "family-write-causative", "category": "inflection", "text": "先生が生徒に感想を書かせる。",
+      "focus": {"surface": "書かせる", "occurrence": 0, "acceptable_segmentations": ["書|かせる", "書か|せる"]},
+      "family": {"group": "write-paradigm", "kind": "paradigm", "landmarks": [{"name": "stem_suffix", "segmentation": "書|かせる"}]}
+    },
+
+    {
+      "id": "family-nlp-processing", "category": "compound", "text": "自然言語処理の基礎を学ぶ。",
+      "focus": {"surface": "自然言語処理", "occurrence": 0, "acceptable_segmentations": ["自然言語|処理", "自然|言語|処理"], "protected_substrings": ["自然", "言語", "処理"]},
+      "family": {"group": "natural-language-compounds", "kind": "lexical", "landmarks": [{"name": "base_modifier", "segmentation": "自然言語|処理"}]}
+    },
+    {
+      "id": "family-nlp-model", "category": "compound", "text": "自然言語モデルを追加学習する。",
+      "focus": {"surface": "自然言語モデル", "occurrence": 0, "acceptable_segmentations": ["自然言語|モデル", "自然|言語|モデル"], "protected_substrings": ["自然", "言語", "モデル"]},
+      "family": {"group": "natural-language-compounds", "kind": "lexical", "landmarks": [{"name": "base_modifier", "segmentation": "自然言語|モデル"}]}
+    },
+    {
+      "id": "family-nlp-understanding", "category": "compound", "text": "自然言語理解の評価方法を調べる。",
+      "focus": {"surface": "自然言語理解", "occurrence": 0, "acceptable_segmentations": ["自然言語|理解", "自然|言語|理解"], "protected_substrings": ["自然", "言語", "理解"]},
+      "family": {"group": "natural-language-compounds", "kind": "lexical", "landmarks": [{"name": "base_modifier", "segmentation": "自然言語|理解"}]}
+    },
+    {
+      "id": "family-nlp-generation", "category": "compound", "text": "自然言語生成の品質を比較する。",
+      "focus": {"surface": "自然言語生成", "occurrence": 0, "acceptable_segmentations": ["自然言語|生成", "自然|言語|生成"], "protected_substrings": ["自然", "言語", "生成"]},
+      "family": {"group": "natural-language-compounds", "kind": "lexical", "landmarks": [{"name": "base_modifier", "segmentation": "自然言語|生成"}]}
+    },
+
+    {
+      "id": "family-split-context-document", "category": "context_control", "text": "長い文書を読みやすい単位に分割する。",
+      "focus": {"surface": "分割する", "occurrence": 0, "acceptable_segmentations": ["分割|する"], "protected_substrings": ["分割"]},
+      "family": {"group": "split-context-control", "kind": "context_control", "landmarks": [{"name": "lexeme_suffix", "segmentation": "分割|する"}]}
+    },
+    {
+      "id": "family-split-context-image", "category": "context_control", "text": "画像を同じ大きさの領域に分割する。",
+      "focus": {"surface": "分割する", "occurrence": 0, "acceptable_segmentations": ["分割|する"], "protected_substrings": ["分割"]},
+      "family": {"group": "split-context-control", "kind": "context_control", "landmarks": [{"name": "lexeme_suffix", "segmentation": "分割|する"}]}
+    },
+    {
+      "id": "family-split-context-data", "category": "context_control", "text": "入力データを訓練用と評価用に分割する。",
+      "focus": {"surface": "分割する", "occurrence": 0, "acceptable_segmentations": ["分割|する"], "protected_substrings": ["分割"]},
+      "family": {"group": "split-context-control", "kind": "context_control", "landmarks": [{"name": "lexeme_suffix", "segmentation": "分割|する"}]}
+    },
+    {
+      "id": "family-split-context-string", "category": "context_control", "text": "文字列を区切り記号の位置で分割する。",
+      "focus": {"surface": "分割する", "occurrence": 0, "acceptable_segmentations": ["分割|する"], "protected_substrings": ["分割"]},
+      "family": {"group": "split-context-control", "kind": "context_control", "landmarks": [{"name": "lexeme_suffix", "segmentation": "分割|する"}]}
+    }
+  ]
+}

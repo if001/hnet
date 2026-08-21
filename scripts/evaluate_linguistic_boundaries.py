@@ -47,8 +47,10 @@ def parse_args() -> argparse.Namespace:
 
 def load_probe(path: Path) -> dict[str, Any]:
     payload = json.loads(path.read_text(encoding="utf-8"))
-    if payload.get("version") not in {1, 2}:
-        raise ValueError("only linguistic boundary probe versions 1 and 2 are supported")
+    if payload.get("version") not in {1, 2, 3}:
+        raise ValueError(
+            "only linguistic boundary probe versions 1, 2 and 3 are supported"
+        )
     if not payload.get("records") or not payload.get("budget_profiles"):
         raise ValueError("probe must contain records and budget_profiles")
     return payload
@@ -208,6 +210,7 @@ def evaluate_record(
         "text": text,
         "focus": focus,
         "pair": record.get("pair"),
+        "family": record.get("family"),
         "input_token_count": len(token_ids),
         "conditions": conditions,
     }

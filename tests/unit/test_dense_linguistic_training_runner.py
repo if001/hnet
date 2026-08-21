@@ -1,5 +1,6 @@
 from scripts.run_dense_linguistic_training import (
     DENSE_STEPS,
+    LR_SCHEDULE_STEPS,
     OUTER_COMPRESSION_TARGETS,
     checkpoint_steps,
     dense_steps,
@@ -15,6 +16,7 @@ def test_dense_run_name_records_main_seed_and_commit() -> None:
 
 def test_dense_steps_are_ten_step_intervals() -> None:
     assert DENSE_STEPS == tuple(range(10, 221, 10))
+    assert LR_SCHEDULE_STEPS == 220
     assert dense_steps(55) == (10, 20, 30, 40, 50)
     assert checkpoint_steps(55) == (55,)
 

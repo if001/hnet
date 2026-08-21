@@ -23,6 +23,7 @@ from scripts.run_boundary_calibration import (
 
 CHECKPOINT_STEPS = (55, 110, 165, 220)
 DENSE_STEPS = tuple(range(10, 221, 10))
+LR_SCHEDULE_STEPS = 220
 OUTER_COMPRESSION_TARGETS = {
     "k1g1": 2.5,
     "k3g1": 2.5,
@@ -113,6 +114,8 @@ def main() -> None:
         "32",
         "--max-steps",
         str(args.max_steps),
+        "--lr-schedule-steps",
+        str(LR_SCHEDULE_STEPS),
         "--learning-rate",
         "0.00035",
         "--min-learning-rate",

@@ -11,8 +11,8 @@ category別precision/coverageもstepとともに変化した。長期実験へ�
 1. architectureごとのcategory差が、成分比、配置順、seed、学習段階のどれに主に対応するか。
 2. KDA、Gated MLA、Transformerをどう組み合わせると、precision、coverage、category間の
    バランス、lexeme fractureを改善できるか。
-3. encoder/decoderが高い学習率で境界を形成する初期に、整形済み・広分布データを与える
-   curriculumが分割の品質と安定性を改善するか。
+3. encoder/decoderが高い学習率で境界を速く学ぶ初期に、整形済み・広分布データを与えると、
+   後続分布へ適応しながら利用できる境界の基盤が形成されるか。
 4. 良い境界proxyが、実際のcategory別byte lossにも対応するか。
 
 一般Transformerで報告された層別の言語情報を再確認すること自体は、本計画の目的ではない。
@@ -136,15 +136,28 @@ parameter数が変わる場合はMLP幅を調整し、総parameter差を1%以内
 
 ## 5. 初期境界学習用data curriculum
 
-### 5.1 現行条件と仮説
+### 5.1 元論文、現行条件、仮説
+
+元H-Net論文は、dynamic chunkingをcontent/context-dependentで、main networkを含むモデル全体と
+jointに学習される仕組みとしている。また、outer stageはinner stageより多くの入力を処理し、
+outer stageの高い学習率がchunking mechanismの学習を加速すると経験的に述べている。ただし、
+初期に獲得した境界がその後も固定される、またはそのまま保存されるとは述べていない。
+
+- 論文: <https://arxiv.org/abs/2507.07955>
+- ICLR 2026版: <https://openreview.net/forum?id=ZbfLR9NbNF>
 
 現行の中規模学習は外側から`lr_multipliers=[2.0, 1.5, 1.0]`を使い、outer/middleの
-encoder/decoder側がinnermost main networkより速く更新される。したがって初期データ分布が
-初期境界へ強く影響するという仮説には妥当性がある。
+encoder/decoder側がinnermost main networkより速く更新される。この条件から立てる仮説は
+「最初の境界が残る」ではなく、次のようにする。
 
-ただし、高い学習率は後続データへの再適応も速くするため、初期データの影響が長く残るとは
-自動的には言えない。また、現行packed datasetはseed固定で全体shuffleされるため、物理的な
-元データの先頭を整えるだけではcurriculumにならない。明示的にphaseを分ける。
+1. 初期の整形済み・広分布データにより、多くのdomainで再利用できる境界確率の基盤が速く形成される。
+2. 学習が進むと完全に固定されるのではなく、基盤の一部を維持しながら現在のデータ分布に合うよう
+   boundary probabilityと選択境界が揺れる。
+3. 初期データが通常mixの場合にも基盤は形成されるが、頻度の高いdomainやノイズへ偏る可能性がある。
+
+高い学習率は後続データへの再適応も速くするため、初期データの影響が長く残るとは自動的には
+言えない。また、現行packed datasetはseed固定で全体shuffleされるため、物理的な元データの
+先頭を整えるだけではcurriculumにならない。明示的な順序制御が必要である。
 
 静的tokenizerが本体より少量のデータで学習できることは参考になるが、H-Netの境界は
 言語モデルlossとcompression lossからend-to-endで変化する。必要量をtokenizerの慣例から
@@ -164,41 +177,63 @@ encoder/decoder側がinnermost main networkより速く更新される。した�
 初期phaseでは、壊れたencoding、極端な反復、テンプレートboilerplate、途中切断されたtool列、
 単一domainの過剰比率を避ける。
 
-### 5.3 比較条件
+### 5.3 第一比較: architectureとデータ総量を固定する
 
-総raw bytesと各sourceの総量をそろえ、順序とLR scheduleを分離する。
+最初の実験ではarchitectureをK3G1に固定する。学習率、optimizer、seed、総raw bytes、
+source別の総サンプル数も固定し、同じデータmultisetの提示順だけを変える。
 
-1. **mixed-from-start**: 現行の全体shuffle。基準条件。
-2. **curated-prefix**: 同じ総量のうち初期20--40M bytesを整形済み広分布mixにし、その後を
-   大量の通常mixへ切り替える。
-3. **curated-dispersed**: curated-prefixと同じcurated samplesを全期間へ分散する。
-   prefix効果と単なるデータ組成効果を分ける。
-4. **curated-prefix + outer-LR taper**: 境界安定後に倍率を例として`[1.2, 1.1, 1.0]`へ下げ、
-   main networkを中心に学習しつつencoder/decoderもわずかに更新する。
+1. **normal-shuffle**: 通常mixを現行方式で全体shuffleする基準条件。
+2. **clean-first**: 同じmultisetに含まれる整形済み・広分布subsetを初期20--40M bytesへ集め、
+   その後に残りをshuffleして与える。
 
-最初はK3G1とK3T1のseed 42で比較する。curated-prefixが両方で同方向に改善した場合だけ、
-hybrid screeningへ同じcurriculumを適用する。
+normal-shuffleにもclean-firstと同じclean samplesが含まれるため、最終的なデータ組成差ではなく
+「初期にまとめて与えた効果」を比較できる。初回比較ではarchitecture変更、outer-LR taper、
+clean data増量を同時に行わない。
+
+K3G1 seed 42で方向を確認し、差がある場合にseed 43、44を追加する。K3T1やhybridへの展開は、
+順序効果が3 seedで再現した後に行う。
+
+既存K3G1 runとデータmultiset、shuffle index、学習設定が完全一致する場合は、normal-shuffleを
+再利用できる。一致しない場合は公平性のため両条件を新たに学習する。
 
 ### 5.4 phase移行条件
 
-固定stepだけでなく、次が2回連続のcheckpointで小さくなった時点をencoder/decoderの
-「落ち着いた」proxyとする。
+clean-firstのprefix終了時をanchor checkpointとし、その後の通常mixで何が維持され、何が
+現在分布へ適応するかを測る。次の3種類を分ける。
 
-- central/nativeのboundary Jaccard変化。
+- **base formation**: prefix中にcommon probeのprecision/coverage、margin、lexeme fractureが改善する。
+- **base retention**: prefix終了時と後続checkpointの間で、domain共通の説明可能境界と
+  boundary probability順位がbaselineより多く維持される。
+- **adaptive movement**: 現在のデータdomainに対応するprobeでは境界確率が適切な方向へ動き、
+  common probe全体を破壊せずにcategory配分が変わる。
+
+完全な境界mask一致を要求しない。境界mask Jaccardだけでなく、許容offsetのprobability相関、
+top-k順位相関、出現・消失した境界のcategoryを使う。
+
+固定stepだけでなく、次が2回連続のcheckpointで小さくなった時点をencoder/decoderの
+「ある程度収束した」proxyとする。
+
+- prefix終了anchorおよび直前checkpointに対するcentral/nativeのboundary Jaccard変化。
 - category別precision/coverageとlexeme fractureの傾き。
 - boundary probabilityのtop-k cutoff margin。
 - native圧縮率とtarget gap。
 - outer/middle/mainのparameter update normまたはgradient norm。
+
+評価probeは、学習全体で固定するcommon probeに加え、clean subset probeと、各後続区間の
+dominant domain probeを用意する。これにより「単なる忘却」と「現在分布への適応」を区別する。
 
 中規模screeningでは10M、20M、40M、60M raw bytes付近を観測し、20--40Mを初期候補とする。
 実測curveが飽和しなければ初期phaseを延長し、早く飽和すれば短縮する。
 
 ### 5.5 実装上の注意
 
-現在のdatasetは単一packed dirを全体shuffleするため、段階dataset切替またはphase-aware samplerが
-必要である。checkpoint resumeはmodel、optimizer、step、data stateを保持できるが、optimizer
-load時のparameter-group倍率を含め、LR multiplier変更が意図どおり反映されることをunit testで
-確認する。optimizerをresetするとcurriculum以外の差が入るため、原則resetしない。
+現在のdatasetは単一packed dirを全体shuffleするため、同一multisetの一部をprefixへ送る
+phase-aware indexまたはsamplerが必要である。normal-shuffleとclean-firstでsample ID、出現回数、
+総bytesが一致することをmanifestとunit testで検証する。
+
+初回比較ではLR multiplierを固定し、単一run内でdata orderだけを切り替える。checkpoint resumeや
+optimizer resetによる差を入れない。outer-LR taperはclean-firstの順序効果が確認された後の
+独立した第二実験とする。
 
 ## 6. 境界proxy以外で追加すべき比較
 
@@ -237,12 +272,13 @@ step 165→220でも続いたため、220 stepでのcategory順位が固定し�
 追加中規模実験は次の順が費用対効果に優れる。
 
 1. 既存48結果のcategory trajectory、bootstrap、budget/native、stage間解析。
-2. K3G1/K3T1でmixed-from-start、curated-prefix、curated-dispersedをseed 42で比較。
-3. 初期境界が改善した場合、outer-LR taperの有無を比較する。
-4. 採用curriculum上で同一成分のordered/reverse/interleavedをseed 42・55 stepで比較。
-5. 独立validation shardのcategory別BPBと長文context probeを併用する。
-6. 勝者のみ3 seed・220 step、必要なら440/880 stepへ延長する。
+2. architectureをK3G1に固定し、同一データmultisetのnormal-shuffleとclean-firstをseed 42で比較。
+3. 差があればseed 43、44で再現し、base formation / retention / adaptive movementを確認する。
+4. 初期順序効果が再現した後だけ、outer-LR taperを独立に比較する。
+5. 採用data order上で同一成分のordered/reverse/interleavedを比較する。
+6. 独立validation shardのcategory別BPBと長文context probeを併用する。
+7. 勝者のみ220 step以降へ延長する。
 
-この順序なら、encoder/decoderが初期データへ適応する効果とmain networkの構成差を混同せず、
-category表から混合構成を大量生成することも避けられる。中規模で細かな機能局在を主張せず、
-長期学習へ持ち込む再現可能なdata scheduleとarchitectureを絞り込む。
+この順序なら、初期に形成された境界が固定されると仮定せず、共通基盤の形成と現在分布への適応を
+同時に評価できる。また、encoder/decoderのdata-order効果とmain networkの構成差を混同せず、
+長期学習へ持ち込む再現可能なdata scheduleとarchitectureを絞り込める。

@@ -33,6 +33,101 @@ family 24文を統合した112文はstep 55/110/165/220でlow/central/high/nativ
 seed 42の55-step pilotにはLR horizonの不一致があったため破棄し、horizon=220で再学習したartifact
 だけを使用した。seed 42のstep 55→220再開ではoptimizerとdata positionの復元を監査した。
 
+## 評価指標の定義と読み方
+
+### 評価対象と境界の分類
+
+本レポートは2-stage H-Netのうち、main networkへ渡されるchunkを決めるstage 1境界を評価する。
+各probe文には注目範囲と、言語的に許容できる一つ以上の分割例を人手で付与している。複数の分割例に
+含まれる境界位置の和集合を **acceptable boundary** とする。モデルが注目範囲内で選んだ境界のうち、
+UTF-8 codepoint間にあるものを **selected evaluable boundary** とし、次のように分類する。
+
+- **explained boundary:** selectedかつacceptableな境界。文節、活用語尾、助動詞、助詞、複合語境界、
+  句読点など、probeの許容分割で言語的に説明できる位置である。
+- **unexplained boundary:** selectedだがacceptableでない境界。注釈した言語的単位では説明できない位置で
+  あり、少ない方がよい。ただし、注釈がすべての妥当な分割を網羅していない可能性があるため、直ちに
+  誤りと断定するものではない。
+- **lexeme fracture:** selected境界のうち、注釈で保護した語彙・形態素の内部を切る位置である。
+  例えば一体として扱いたい複合語や語幹の内部を切る傾向を測り、少ない方がよい。
+- UTF-8 codepoint内部の境界はconstraint-dependentとして言語指標の分母から除外する。本実験は
+  `utf8-hard` で実行しており、UTF-8違反の有無をモデル選定の主指標にはしていない。
+
+### Category precision / coverage / fracture
+
+category 88文を、文節、助動詞、助詞、複合語、structuredなどのcategory別または全体で集計する。
+表の `P/C/F` は次を表し、すべて0から1の範囲を取る。
+
+| 略記 | 定義 | 高い／低い場合の意味 |
+| --- | --- | --- |
+| P: explainable boundary precision | explained境界数 ÷ selected evaluable境界数 | 高いほど、モデルが実際に置いた境界の多くを言語的に説明できる。低いほど説明困難な境界が多い。 |
+| C: category coverage | explained境界数 ÷ acceptable境界候補数 | 高いほど、probeが期待する境界候補を広く拾う。低い場合は、境界を置かない、または別の位置へ置く傾向を表す。 |
+| F: lexeme fracture rate | protected lexeme内部のselected境界数 ÷ selected evaluable境界数 | 低いほど語彙内部を壊しにくい。高いほど、計算単位として再利用しにくい断片を作る懸念が強い。 |
+
+全体値は文ごとの率の単純平均ではなく、対象recordの境界数を合算して求めるmicro集計である。
+文節P/Cも同じ定義を文節categoryのrecordだけへ適用する。
+
+precisionだけが高くても、境界をほとんど選ばず少数の安全な位置だけを選んだ結果かもしれない。
+逆にcoverageだけが高くても、過剰に境界を置いて多くのacceptable位置を偶然含んだ可能性がある。
+したがって、PとCは必ず併記し、Fも含めてPareto比較する。単一の総合scoreには変換しない。
+
+### Family precision / coverage / integrity
+
+family 24文は、同じ語の活用違い、同じ表現の文脈違い、同種の複合語など、関連するrecordをfamilyとして
+まとめたprobeである。単発の境界一致だけでなく、関連例にまたがって再利用可能な分割を行うかを見る。
+
+| 指標 | 定義 | 高い／低い場合の意味 |
+| --- | --- | --- |
+| family precision | 各family内の explained ÷ selected をfamily間で平均 | 高いほど、関連例で選ぶ境界が言語的に説明しやすい。境界を一つも選ばずprecisionが未定義のfamilyは、本集計では0として扱う。 |
+| family coverage | 各family内の explained ÷ acceptable をfamily間で平均 | 高いほど、活用・文脈・語彙family全体で期待境界を拾えている。低い場合は、有用な境界を選ばないfamilyが多い。 |
+| family lexeme integrity | protected lexeme内部にfractureが一つもないrecordの割合をfamily間で平均 | 高いほど保護語彙を一体として保つ。低いほど語彙内部を切るrecordが多い。 |
+
+integrityは、モデルが境界そのものをほとんど置かない場合にも高くなり得る。そのため「高integrityかつ
+低coverage」は必ずしも良い分割ではなく、family precision/coverageおよびlandmarkと一緒に読む。
+
+### Landmark coverage / consistency
+
+familyには、例えば `分割|する` のように、関連record間で追跡したい名前付き境界をlandmarkとして
+指定している。
+
+- **landmark coverage（表のlandmark C）:** 指定landmarkを実際に選んだrecord数 ÷ そのlandmarkを
+  持つrecord数。高いほど、期待する再利用可能な境界をfamily内で広く選ぶ。0は一度も選ばず、1は
+  全recordで選ぶことを表す。
+- **landmark consistency:** 「選ぶ／選ばない」の多数側のrecord割合。1に近いほど判断が揃い、0.5に
+  近いほど揺れる。ただし、全recordで選ばない場合も1になるため、coverage=0かつconsistency=1は
+  有用な一貫性ではない。本レポートの主要表ではcoverageを掲載し、consistencyはraw集計に保持する。
+
+context-control familyについては、同じsurfaceで選んだ境界位置の完全な組合せが一致する割合を
+**context signature consistency** として補助的に保存する。高いほど文脈が変わっても同じ分割だが、
+動的chunkingでは文脈に応じた妥当な変化もあり得るため、高ければ常に良いとは判定しない。
+
+### Dense trajectory指標
+
+family 24文をstep 10, 20, ..., 220の22時点でnative評価し、単一checkpointの偶然ではなく、学習中に
+どの領域へどれだけ滞在したかを測る。
+
+| 表記 | 定義 | 高い／低い場合の意味 |
+| --- | --- | --- |
+| time P/C | checkpointごとにmicro集計したprecision/coverageの22時点平均 | 高いほど、学習期間を通して説明可能境界または期待境界を維持する。単点の良さより持続性を評価する。 |
+| fracture occupancy | 各checkpoint・recordのうち、fractureを一つ以上含むものの割合 | 低いほど、学習中に語彙を壊す分割へ滞在しにくい。境界本数ではなく、問題を含むrecordの滞在率である。 |
+| unexplained occupancy | 各checkpoint・recordのうち、unexplained境界を一つ以上含むものの割合 | 低いほど、説明困難な分割へ滞在しにくい。raw集計に保持する補助指標である。 |
+| late P/C | 最後の2 checkpoint（step 210/220）をまとめたprecision/coverage | 学習終盤の状態を表す。高い方がよいが、2時点だけなのでtime P/Cと併記する。 |
+| late fracture | 最後の2 checkpoint・recordにおけるfracture occupancy | 低いほど終盤に語彙内部を壊しにくい。 |
+| transition | 隣接checkpoint間で、同じrecordのselected境界位置の完全な組が変わった比較数 ÷ 全比較数 | 高いほど分割が頻繁に変化し、低いほど安定する。ただし、不自然な分割へ固定されても低くなるため、良否を単独では決めない。 |
+
+### Compression profile、native、seed集計
+
+- **native:** モデル自身のrouter判定をそのまま使う。dense trajectoryはnativeで評価する。
+- **low compression:** 平均2.5 unit/chunk相当の境界予算。比較的多く境界を置く。
+- **central:** 平均3.0 unit/chunk相当。本レポートのstep別主要表に使用する。
+- **high compression:** 平均3.5 unit/chunk相当。境界を少なくして大きいchunkを作る。
+
+固定profileは学習済み境界確率の上位を指定予算まで選び、境界数の違いを統制して順位の頑健性を見る。
+nativeとの違いは「境界確率の順位」と「モデル自身が選ぶ境界数」を分けて考えるためのものである。
+
+表の `平均±標準偏差` はseed 42/43/44の3値に対する算術平均と母標準偏差である。標準偏差が小さい
+ほどseed間の値は安定するが、平均値自体が良いことを保証しない。また3 seedだけなので、統計的な
+有意差ではなく再現方向と効果の大きさを確認する記述統計として扱う。
+
 ## step 220 central評価
 
 ### seed別結果

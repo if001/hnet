@@ -17,7 +17,10 @@ seed、学習時点、評価categoryの間で交互作用し、どちらか一�
   ならなかった。
 
 したがって、順序差を層位置の一般的効果とは結論せず、本ordered/reverse混合を長時間実験の本線には
-採用しない。現計画の停止条件に従い、長時間候補はK1G1を維持する。
+採用しない。現計画の停止条件に従い、長時間候補はK1G1を維持する。ただし既存6構成を同じ112文で
+比較すると、K1-firstはK1G1とK3G1の中間的な性質を実際に獲得しており、文節coverageは全候補中
+同率最高だった。したがって混合の考え方自体を棄却するのではなく、seed要因を分離した小規模追試と、
+K/G比率・配置を分離するcontrolを次の候補とする。
 
 ## 構成と実行条件
 
@@ -32,6 +35,22 @@ family 24文を統合した112文はstep 55/110/165/220でlow/central/high/nativ
 
 seed 42の55-step pilotにはLR horizonの不一致があったため破棄し、horizon=220で再学習したartifact
 だけを使用した。seed 42のstep 55→220再開ではoptimizerとdata positionの復元を監査した。
+
+### 本実験のseedが変更するもの
+
+現在の学習CLIの`--seed`はrun全体で共用され、学習開始時にPython、NumPy、PyTorch CPU、全CUDA
+deviceの乱数を設定する。さらに同じ値をpacked training datasetのshuffleへ渡す。このためseed
+42/43/44を変えると、少なくとも次の二つが同時に変化する。
+
+1. モデルweightの初期値
+2. 同一packed dataset内のtraining sample提示順序
+
+データセットの内容、明示的なvalidation dataset、probe文は変わらない。validationはshuffleせず、
+評価スクリプトの`--seed`は結果を識別するmetadataであって推論を乱数化しない。
+
+したがって本レポートの3 seed比較が示すのは、**初期weightとデータ順序を合わせたrun全体の頑健性**
+である。seed差をweight初期値だけ、またはデータ順序だけの効果として解釈してはならない。後述の
+分離実験を行うまでは、seed 43での順位反転の原因も両者のどちらかに特定できない。
 
 ## 評価指標の定義と読み方
 
@@ -158,6 +177,45 @@ K1-firstの文節precisionは3 seedすべてで高く、差はK3-first minus K1-
 K3-firstのfamily平均は高いが、標準偏差が大きく、seed 44の `.906/.782` に強く依存する。
 一方、K1-firstの文節優位は3 seedで方向が一致している。
 
+## 既存main networkを含むstep 220比較
+
+既存のT26、K1G1、K3G1、K3T1には、同じ112文probe、central、stage 1、step 220、seed
+42/43/44の評価がある。次表はそれらと今回の2混合構成を同じ集計定義で並べた3 seed平均である。
+ただし前節のとおり、各seed内で初期weightとデータ順序が同時に変わる制約は全構成に共通する。
+
+| model | category P/C/F | family P/C | integrity | landmark C | 文節 P/C |
+| --- | --- | --- | ---: | ---: | --- |
+| T26 | .439/.239/.257 | .448/.332 | .806 | .417 | .301/.348 |
+| K1G1 | .451/.271/.255 | **.708/.506** | .861 | **.611** | .168/.203 |
+| K3G1 | **.490**/.261/**.218** | .339/.240 | .833 | .306 | **.321**/.333 |
+| K3T1 | .453/.254/.265 | .619/.380 | .903 | .458 | .295/.319 |
+| K1-first | .471/.264/.262 | .560/.379 | .903 | .431 | .294/**.348** |
+| K3-first | .441/.256/.244 | .646/.490 | **.917** | .583 | .182/.232 |
+
+### 良くなった点
+
+- **K1-first:** K1G1に対して文節P/Cが`.168/.203`から`.294/.348`へ改善した。K3G1と比べても
+  文節precisionはわずかに低いがcoverageは高い。category precisionもK1G1より高く、K1G1とK3G1の
+  中間化は部分的に成功した。
+- **K3-first:** K3G1に対してfamily P/Cが`.339/.240`から`.646/.490`へ大きく改善し、K1G1の
+  `.708/.506`に近づいた。integrityは6構成中最高、landmark coverageもK1G1に次ぐ。
+- 両混合とも、親の片方にしかなかった特徴を一部取り込んだため、main-network layoutがouter-stageの
+  境界学習へ影響するという探索仮説には情報価値があった。
+
+### 悪化した点と未達点
+
+- K1-firstはK1G1よりfamily P/Cとlandmarkが低く、fractureもわずかに悪い。文節改善と引き換えに
+  K1G1の再利用可能境界の強みを十分維持できなかった。
+- K3-firstはK3G1よりcategory precisionと文節が低く、K1G1よりcategory coverageと文節が低い。
+  familyの改善はseed 44への依存が大きく、安定した総合改善ではない。
+- T26はcategory/family主要軸で新しい最大値を持たないが、文節coverageはK1-firstと同率最高である。
+  Transformer baselineとして残す価値はあるものの、今回の境界proxyだけで本線へ戻す根拠は弱い。
+- K3T1はintegrityとfamily precisionで比較的強いが、後述のdense終盤でfamily性能が維持されなかった。
+
+この表ではK1-firstにも独自の優位軸があるため、厳密な意味で全候補に支配されているわけではない。
+一方、「K1G1のfamilyを大きく落とさずK3G1の文節へ近づく」という事前の成功条件は満たしていない。
+したがって、長時間本線には上げないが、要因分離後の小規模な構成改善候補には残す、という判断になる。
+
 ## dense 22時点評価
 
 fractureは「その評価時点でfractureを含むfamily recordの割合」を全checkpointで平均した値で、
@@ -176,6 +234,28 @@ K3-first minus K1-firstのtime-averaged precision差は `+.068/-.047/+.163`、fr
 `-.100/+.008/-.093` だった。平均ではK3-firstが良いが、seed 43で両方の方向が反転するため、
 計画で定めた「seed間で方向が反転する場合は層位置効果と結論しない」に該当する。
 
+### 既存構成とのdense比較
+
+同じ10-step間隔、native、family 24文、step 10--220で直接比較できる既存runはseed 42のK1G1、
+K3G1、K3T1である。T26には4 checkpointの疎trajectoryはあるが、同条件の22時点dense runはないため
+次表へ混ぜない。
+
+| model（seed 42） | time P/C | fracture | late P/C | late fracture | transition |
+| --- | --- | ---: | --- | ---: | ---: |
+| K1G1 | .598/**.675** | **.098** | **.636/.636** | **.083** | .341 |
+| K3G1 | .478/.492 | .335 | .412/.424 | .208 | .349 |
+| K3T1 | .508/.417 | .311 | .233/.152 | .396 | .375 |
+| K1-first | .559/.428 | .426 | .500/.424 | .542 | **.220** |
+| K3-first | **.627**/.445 | .326 | .622/.348 | .292 | .226 |
+
+K3-firstはtime precisionで最大だが、K1G1よりcoverageが大幅に低く、fractureも高い。K1-firstは
+K1G1より全主要dense品質軸で悪く、低transitionも不自然な分割へ固定された可能性を除外できない。
+したがってdenseでは、混合が既存anchor K1G1を総合的に改善したとはいえない。
+
+T26と完全に比較するには、同じrunner、probe、LR horizon、compression設定でseed 42の220-step
+10-step dense runを追加する必要がある。既存の4 checkpoint疎trajectoryを22時点平均と同じ値として
+扱うことはできない。
+
 ## 学習時点とcategoryの相互作用
 
 - step 55ではK3-firstのlandmark coverageが3/3 seedで高く、文節precision/coverageはK1-firstが
@@ -190,6 +270,49 @@ K3-first minus K1-firstのtime-averaged precision差は `+.068/-.047/+.163`、fr
 全時点へ一様に波及しないことを示す。小規模学習では、単純に「前半K3」または「前半K1」を選べば
 全指標が改善するとはいえない。
 
+## 次に必要な要因分離と構成改善
+
+### Weight初期値とデータ順序のseed分離
+
+学習CLIを少なくとも`model_init_seed`、`data_order_seed`、`train_runtime_seed`へ分ける必要がある。
+`train_runtime_seed`はモデル初期化後に再設定し、dropout等の学習時乱数が初期化seedへ連動しないように
+する。最小のone-factor-at-a-time設計は次の5条件である。
+
+| 条件 | model init | data order | runtime | 評価する差 |
+| --- | ---: | ---: | ---: | --- |
+| baseline | 42 | 42 | 42 | 基準 |
+| init-43 | 43 | 42 | 42 | 初期weightだけの効果 |
+| init-44 | 44 | 42 | 42 | 初期weightだけの効果 |
+| data-43 | 42 | 43 | 42 | データ順序だけの効果 |
+| data-44 | 42 | 44 | 42 | データ順序だけの効果 |
+
+データ順序だけを変える比較では、同一architectureのstep 0 state dictを保存して全runへロードする方が、
+同じseedから再生成するより厳密である。各runには初期checkpoint hash、shuffle index hash、先頭N sample
+IDをmanifestへ保存する。最小設計で差が見えた構成だけ、3 init × 3 dataのcrossed designへ進めれば、
+初期値・順序・両者のinteractionを推定できる。
+
+architecture間ではparameterの意味と並びが異なるため、異なる構成へ完全に同じweightをコピーすることは
+できない。比較は同じdata-order/runtime条件を対応させたpaired runとし、各architecture内で上記の
+分散要因を分ける。
+
+### 次のmain-network構成
+
+今回の2構成は順序だけでなく、親K1G1/K3G1に対してK/G比率もK=16/G=10へ変えている。次は次の順で
+探索すると、何が改善を生んだかを切り分けやすい。
+
+1. **K=16/G=10のinterleaved control:** 同じ成分数を全26層へ均等に分散し、連続KDA blockの位置と
+   中間K/G比率を分離する。
+2. **K1G1寄りの小さい変更:** K=14/G=12またはK=15/G=11とし、K1-firstで見えた文節改善を狙いつつ、
+   K1G1のfamily/landmark低下を抑える。連続KDA区間はまず1--2個に限定する。
+3. **block位置control:** 同じK/G数で連続KDA区間を前半・中盤・後半へ置き、文節とlandmarkのどちらが
+   位置に追随するかを見る。
+4. 55-step screeningでも10-step denseを残し、step 55の良さだけで選ばない。要因分離したseed条件で
+   K1G1のfamily/低fractureを維持し、K3G1相当の文節へ近づいた構成だけを220 stepへ延長する。
+
+現時点の優先順位は、長時間anchorがK1G1、構成改善の第一候補が「K1G1寄りで後半の連続KDA量を
+減らしたK1-first」、因果切り分け用controlがK=16/G=10 interleavedである。K3G1、K3T1、T26は
+それぞれ文節、integrity、Transformer baselineの比較対象として保持する。
+
 ## 仮説判定
 
 1. **親の強みの両立:** 不成立。混合はK1G1より文節を改善した時点があるが、K1G1のcategory、
@@ -198,7 +321,8 @@ K3-first minus K1-firstのtime-averaged precision差は `+.068/-.047/+.163`、fr
    あるが、denseとfamilyの方向反転により一般的な層位置効果とは結論しない。
 3. **位置よりK/G比率:** ordered/reverseが完全に同じではないため位置を無視できない。ただし本実験は
    K/G比率だけの因果効果も証明しない。
-4. **長時間候補:** 混合2構成は見送り、K1G1を維持する。
+4. **長時間候補:** 現混合2構成は見送り、K1G1を維持する。K1-firstは長時間候補ではなく、seedと
+   K/G比率を分離した次の小規模構成探索の出発点として保持する。
 
 ## Artifact
 

@@ -23,6 +23,9 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--training-metrics", type=Path, required=True)
     parser.add_argument("--model-name", required=True)
     parser.add_argument("--seed", type=int, required=True)
+    parser.add_argument("--model-init-seed", type=int)
+    parser.add_argument("--data-order-seed", type=int)
+    parser.add_argument("--train-runtime-seed", type=int)
     parser.add_argument("--output-dir", type=Path, required=True)
     return parser.parse_args()
 
@@ -89,6 +92,19 @@ def main() -> None:
             "version": int(probe["version"]),
             "model_name": args.model_name,
             "seed": args.seed,
+            "seed_factors": {
+                "model_init_seed": (
+                    args.seed if args.model_init_seed is None else args.model_init_seed
+                ),
+                "data_order_seed": (
+                    args.seed if args.data_order_seed is None else args.data_order_seed
+                ),
+                "train_runtime_seed": (
+                    args.seed
+                    if args.train_runtime_seed is None
+                    else args.train_runtime_seed
+                ),
+            },
             "checkpoint_label": f"step{step}-dense-native-v1",
             "cumulative_input_bytes": cumulative_bytes[step],
             "byte_boundary_constraint": "utf8-hard",
@@ -97,7 +113,9 @@ def main() -> None:
             "records": output_records,
         }
         output_path = args.output_dir / (
-            f"{args.model_name}_s{args.seed}_step{step}_dense.json"
+            f"{args.model_name}_i{output['seed_factors']['model_init_seed']}_"
+            f"d{output['seed_factors']['data_order_seed']}_"
+            f"r{output['seed_factors']['train_runtime_seed']}_step{step}_dense.json"
         )
         output_path.write_text(
             json.dumps(output, ensure_ascii=False, indent=2) + "\n",

@@ -155,9 +155,44 @@ def parse_args() -> TrainingConfig:
         type=float,
         help="Learning-rate multiplier per stage. Repeat for each hierarchy level.",
     )
-    parser.add_argument("--seed", type=int, default=42)
+    parser.add_argument(
+        "--seed",
+        type=int,
+        default=42,
+        help="Legacy fallback used for every split seed that is not specified.",
+    )
+    parser.add_argument(
+        "--model-init-seed",
+        type=int,
+        default=None,
+        help="Seed used only while constructing initial model parameters.",
+    )
+    parser.add_argument(
+        "--data-order-seed",
+        type=int,
+        default=None,
+        help="Seed used only for packed training sample order.",
+    )
+    parser.add_argument(
+        "--train-runtime-seed",
+        type=int,
+        default=None,
+        help="Seed restored after model initialization for training-time RNG.",
+    )
     parser.add_argument("--num-workers", type=int, default=0)
     parser.add_argument("--shuffle-buffer-size", type=int, default=512)
+    parser.add_argument(
+        "--initial-model-checkpoint",
+        type=str,
+        default=None,
+        help="Load an exact step-0 model state without resuming step/data/optimizer.",
+    )
+    parser.add_argument(
+        "--save-initial-model-to",
+        type=str,
+        default=None,
+        help="Save the exact model state used before the first optimizer step.",
+    )
     parser.add_argument(
         "--resume-from-checkpoint",
         type=str,
@@ -211,6 +246,10 @@ def parse_args() -> TrainingConfig:
 
     if args.packed_validation_data_dir is not None and args.packed_data_dir is None:
         raise ValueError("--packed-validation-data-dir requires --packed-data-dir")
+    if args.initial_model_checkpoint and args.resume_from_checkpoint:
+        raise ValueError(
+            "--initial-model-checkpoint and --resume-from-checkpoint are mutually exclusive"
+        )
 
     compression_ratios = args.compression_ratios or [4.0]
 
@@ -295,8 +334,13 @@ def parse_args() -> TrainingConfig:
         compression_ratios=compression_ratios,
         lr_multipliers=lr_multipliers,
         seed=args.seed,
+        model_init_seed=args.model_init_seed,
+        data_order_seed=args.data_order_seed,
+        train_runtime_seed=args.train_runtime_seed,
         num_workers=args.num_workers,
         shuffle_buffer_size=args.shuffle_buffer_size,
+        initial_model_checkpoint=args.initial_model_checkpoint,
+        save_initial_model_to=args.save_initial_model_to,
         resume_from_checkpoint=args.resume_from_checkpoint,
         resume_optimizer=not args.no_resume_optimizer,
         resume_step=not args.no_resume_step,

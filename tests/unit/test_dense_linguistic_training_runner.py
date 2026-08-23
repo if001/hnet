@@ -5,6 +5,7 @@ from scripts.run_dense_linguistic_training import (
     checkpoint_steps,
     copy_resume_artifacts,
     dense_steps,
+    resume_seed_factors,
     run_name,
 )
 
@@ -29,6 +30,11 @@ def test_dense_targets_include_combined_pareto_candidates() -> None:
         "k3t1": 3.0,
         "k1first_mix": 2.5,
         "k3first_mix": 2.5,
+        "k14g12_front": 2.5,
+        "k14g12_middle": 2.5,
+        "k14g12_late": 2.5,
+        "k15g11_split": 2.5,
+        "k16g10_even": 2.5,
     }
 
 
@@ -36,6 +42,18 @@ def test_dense_run_name_supports_screening_length() -> None:
     assert run_name("k1first_mix", 42, "abcdef0123", 55) == (
         "r6_dense_family_v1_k1first_mix_s42_step55_abcdef0"
     )
+
+
+def test_dense_run_name_records_factorized_seeds() -> None:
+    assert run_name(
+        "k14g12_late",
+        42,
+        "abcdef0123",
+        55,
+        model_init_seed=43,
+        data_order_seed=44,
+        train_runtime_seed=42,
+    ) == "r6_dense_family_v1_k14g12_late_i43_d44_r42_step55_abcdef0"
 
 
 def test_copy_resume_artifacts_requires_complete_step55_run(tmp_path) -> None:
@@ -55,3 +73,26 @@ def test_copy_resume_artifacts_requires_complete_step55_run(tmp_path) -> None:
     assert checkpoint == destination / "checkpoint_step_000055.pt"
     assert checkpoint.read_bytes() == b"checkpoint"
     assert len(list((destination / "validation_chunks").glob("*.json"))) == 5
+
+
+def test_resume_seed_factors_support_legacy_and_split_metadata(tmp_path) -> None:
+    source = tmp_path / "source"
+    source.mkdir()
+    config = source / "dense_run_config.json"
+    config.write_text('{"seed": 42}', encoding="utf-8")
+    assert resume_seed_factors(source) == {
+        "model_init_seed": 42,
+        "data_order_seed": 42,
+        "train_runtime_seed": 42,
+    }
+    config.write_text(
+        '{"seed": 42, "seed_factors": {'
+        '"model_init_seed": 43, "data_order_seed": 44, '
+        '"train_runtime_seed": 45}}',
+        encoding="utf-8",
+    )
+    assert resume_seed_factors(source) == {
+        "model_init_seed": 43,
+        "data_order_seed": 44,
+        "train_runtime_seed": 45,
+    }

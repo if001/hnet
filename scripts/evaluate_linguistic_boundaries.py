@@ -35,6 +35,9 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--probe", type=Path, required=True)
     parser.add_argument("--output", type=Path, required=True)
     parser.add_argument("--seed", type=int)
+    parser.add_argument("--model-init-seed", type=int)
+    parser.add_argument("--data-order-seed", type=int)
+    parser.add_argument("--train-runtime-seed", type=int)
     parser.add_argument("--checkpoint-label")
     parser.add_argument(
         "--byte-boundary-constraint",
@@ -238,6 +241,19 @@ def main() -> None:
         "model_path": args.model_path,
         "config_path": args.config_path,
         "seed": args.seed,
+        "seed_factors": {
+            "model_init_seed": (
+                args.seed if args.model_init_seed is None else args.model_init_seed
+            ),
+            "data_order_seed": (
+                args.seed if args.data_order_seed is None else args.data_order_seed
+            ),
+            "train_runtime_seed": (
+                args.seed
+                if args.train_runtime_seed is None
+                else args.train_runtime_seed
+            ),
+        },
         "checkpoint_label": args.checkpoint_label,
         "probe_path": str(args.probe),
         "byte_boundary_constraint": args.byte_boundary_constraint,

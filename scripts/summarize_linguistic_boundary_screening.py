@@ -14,6 +14,7 @@ if str(REPOSITORY_ROOT) not in sys.path:
     sys.path.insert(0, str(REPOSITORY_ROOT))
 
 from hnet.training.linguistic_boundary_families import summarize_family_scores
+from hnet.training.linguistic_boundary_identity import linguistic_run_id
 from hnet.training.linguistic_boundary_trajectory import summarize_trajectory_scores
 
 
@@ -45,7 +46,7 @@ def aggregate_scores(runs: list[dict[str, Any]]) -> list[dict[str, Any]]:
     groups: dict[tuple[str, str, str, str], list[dict[str, Any]]] = defaultdict(list)
     metadata: dict[tuple[str, str, str, str], dict[str, Any]] = {}
     for run in runs:
-        run_id = f"{run['model_name']}|{run.get('seed')}|{run.get('checkpoint_label')}"
+        run_id = linguistic_run_id(run)
         for record in run["records"]:
             for condition, condition_result in record["conditions"].items():
                 for stage in ("stage0", "stage1"):
@@ -54,6 +55,7 @@ def aggregate_scores(runs: list[dict[str, Any]]) -> list[dict[str, Any]]:
                     metadata[key] = {
                         "model_name": run["model_name"],
                         "seed": run.get("seed"),
+                        "seed_factors": run.get("seed_factors"),
                         "checkpoint_label": run.get("checkpoint_label"),
                         "constraint": run.get(
                             "byte_boundary_constraint", "unspecified"
@@ -137,7 +139,7 @@ def aggregate_scores(runs: list[dict[str, Any]]) -> list[dict[str, Any]]:
 def pair_scores(runs: list[dict[str, Any]]) -> list[dict[str, Any]]:
     rows: list[dict[str, Any]] = []
     for run in runs:
-        run_id = f"{run['model_name']}|{run.get('seed')}|{run.get('checkpoint_label')}"
+        run_id = linguistic_run_id(run)
         condition_names = run["records"][0]["conditions"].keys()
         for condition in condition_names:
             for stage in ("stage0", "stage1"):
@@ -166,6 +168,7 @@ def pair_scores(runs: list[dict[str, Any]]) -> list[dict[str, Any]]:
                         {
                             "model_name": run["model_name"],
                             "seed": run.get("seed"),
+                            "seed_factors": run.get("seed_factors"),
                             "checkpoint_label": run.get("checkpoint_label"),
                             "run_id": run_id,
                             "condition": condition,

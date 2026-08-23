@@ -21,6 +21,11 @@ MODEL_CONFIGS = {
     "k3g1": "configs/hnet_2stage_200m_k3g1.json",
     "k1first_mix": "configs/hnet_2stage_200m_k1first_mix.json",
     "k3first_mix": "configs/hnet_2stage_200m_k3first_mix.json",
+    "k14g12_front": "configs/hnet_2stage_200m_k14g12_front.json",
+    "k14g12_middle": "configs/hnet_2stage_200m_k14g12_middle.json",
+    "k14g12_late": "configs/hnet_2stage_200m_k14g12_late.json",
+    "k15g11_split": "configs/hnet_2stage_200m_k15g11_split.json",
+    "k16g10_even": "configs/hnet_2stage_200m_k16g10_even.json",
 }
 PROBES = [
     "彼女はいま笑っている。",

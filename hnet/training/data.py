@@ -1,3 +1,4 @@
+import hashlib
 import json
 import logging
 from collections.abc import Iterable, Iterator, Mapping, Sequence
@@ -240,6 +241,31 @@ class PackedMixByteDataset(torch.utils.data.Dataset):
 
     def __len__(self) -> int:
         return self.total_chunks - self._start
+
+    def order_audit(self, sample_limit: int = 32) -> dict[str, object]:
+        """Return a stable digest and an inspectable prefix of packed sample order."""
+        canonical = np.asarray(self._shuffle_index, dtype="<i8")
+        digest = hashlib.sha256(canonical.tobytes(order="C")).hexdigest()
+        samples: list[dict[str, int]] = []
+        stop = min(self._start + max(0, sample_limit), self.total_chunks)
+        for position in range(self._start, stop):
+            sample_index = int(self._shuffle_index[position])
+            samples.append(
+                {
+                    "position": position,
+                    "sample_index": sample_index,
+                    "shard_id": int(self._sample_shard_ids[sample_index]),
+                    "chunk_offset": int(self._sample_chunk_offsets[sample_index]),
+                }
+            )
+        return {
+            "seed": self.seed,
+            "shuffle": self.shuffle,
+            "start_micro_batch": self._start,
+            "total_chunks": self.total_chunks,
+            "shuffle_index_sha256": digest,
+            "sample_prefix": samples,
+        }
 
     def _build_or_load_indices(
         self,

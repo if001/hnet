@@ -2,7 +2,6 @@ import csv
 import json
 import logging
 import math
-import random
 import time
 from dataclasses import asdict
 from pathlib import Path
@@ -26,6 +25,13 @@ from .chunking_utils import (
 from ..utils.train import group_params, load_balancing_loss
 from .config import DatasetSource, TrainingConfig
 from .freezing import apply_freeze_mode
+from .seeding import (
+    capture_rng_state,
+    model_state_sha256,
+    resolve_training_seeds,
+    restore_rng_state,
+    set_global_seed,
+)
 from .data import (
     DefaultRecordFormatter,
     PackedMixByteDataset,
@@ -200,11 +206,8 @@ def configure_logging() -> logging.Logger:
 
 
 def set_seed(seed: int) -> None:
-    random.seed(seed)
-    np.random.seed(seed)
-    torch.manual_seed(seed)
-    if torch.cuda.is_available():
-        torch.cuda.manual_seed_all(seed)
+    """Backward-compatible validation helper for the historical single seed."""
+    set_global_seed(seed)
 
 
 def count_parameters(model: torch.nn.Module) -> tuple[int, int]:
@@ -264,6 +267,9 @@ def create_dataloader(
         shuffle=shuffle,
     )
     dataloader_kwargs: dict[str, object] = {}
+    dataloader_kwargs["generator"] = torch.Generator().manual_seed(
+        resolve_training_seeds(training_config).data_order_seed
+    )
     if effective_num_workers > 0:
         dataloader_kwargs["persistent_workers"] = True
         dataloader_kwargs["prefetch_factor"] = 2
@@ -292,11 +298,14 @@ def create_packed_dataloader(
         packed_dir=packed_dir,
         seq_len=training_config.seq_len,
         shuffle=shuffle,
-        seed=training_config.seed,
+        seed=resolve_training_seeds(training_config).data_order_seed,
         shard_indices=shard_indices,
         start_micro_batch=start_micro_batch,
     )
     dataloader_kwargs: dict[str, object] = {}
+    dataloader_kwargs["generator"] = torch.Generator().manual_seed(
+        resolve_training_seeds(training_config).data_order_seed
+    )
     if effective_num_workers > 0:
         dataloader_kwargs["persistent_workers"] = True
         dataloader_kwargs["prefetch_factor"] = 2
@@ -545,6 +554,8 @@ def save_checkpoint(
     step: int,
     output_dir: Path,
     data_state: Mapping[str, int] | None = None,
+    rng_state: Mapping[str, Any] | None = None,
+    seed_metadata: Mapping[str, Any] | None = None,
 ) -> Path:
     output_dir.mkdir(parents=True, exist_ok=True)
     checkpoint_path = output_dir / f"checkpoint_step_{step:06d}.pt"
@@ -555,6 +566,10 @@ def save_checkpoint(
     }
     if data_state is not None:
         payload["data_state"] = dict(data_state)
+    if rng_state is not None:
+        payload["rng_state"] = dict(rng_state)
+    if seed_metadata is not None:
+        payload["seed_metadata"] = dict(seed_metadata)
     torch.save(payload, checkpoint_path)
     return checkpoint_path
 
@@ -880,11 +895,18 @@ def evaluate_validation(
 
 def train(training_config: TrainingConfig) -> None:
     logger = configure_logging()
-    set_seed(training_config.seed)
+    resolved_seeds = resolve_training_seeds(training_config)
+    set_seed(resolved_seeds.model_init_seed)
 
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     logger.info("device=%s", device)
     logger.info("training_config=%s", asdict(training_config))
+    logger.info(
+        "resolved_seeds model_init=%d data_order=%d train_runtime=%d",
+        resolved_seeds.model_init_seed,
+        resolved_seeds.data_order_seed,
+        resolved_seeds.train_runtime_seed,
+    )
 
     training_dtype = get_training_dtype(device)
     use_grad_scaler = device.type == "cuda" and training_dtype == torch.float16
@@ -897,6 +919,23 @@ def train(training_config: TrainingConfig) -> None:
     )
 
     model, model_config = create_model(training_config, device, training_dtype)
+
+    if (
+        training_config.initial_model_checkpoint is not None
+        and training_config.resume_from_checkpoint is not None
+    ):
+        raise ValueError(
+            "initial_model_checkpoint and resume_from_checkpoint are mutually exclusive"
+        )
+    initial_checkpoint = None
+    if training_config.initial_model_checkpoint is not None:
+        initial_checkpoint = load_checkpoint_file(
+            training_config.initial_model_checkpoint, device
+        )
+        model.load_state_dict(extract_model_state_dict(initial_checkpoint), strict=True)
+        logger.info(
+            "loaded_initial_model_from=%s", training_config.initial_model_checkpoint
+        )
 
     resume_checkpoint = None
     resumed_step = 0
@@ -931,6 +970,50 @@ def train(training_config: TrainingConfig) -> None:
             if isinstance(raw_input_bytes, int) and raw_input_bytes >= 0:
                 resumed_input_bytes = raw_input_bytes
                 logger.info("resumed_input_bytes=%d", resumed_input_bytes)
+    initial_model_sha256 = (
+        resume_checkpoint.get("seed_metadata", {}).get("initial_model_sha256")
+        if isinstance(resume_checkpoint, Mapping)
+        and isinstance(resume_checkpoint.get("seed_metadata"), Mapping)
+        else None
+    )
+    loaded_model_sha256 = None
+    if resume_checkpoint is None:
+        loaded_model_sha256 = model_state_sha256(model)
+        expected_initial_hash = (
+            initial_checkpoint.get("seed_metadata", {}).get("initial_model_sha256")
+            if isinstance(initial_checkpoint, Mapping)
+            and isinstance(initial_checkpoint.get("seed_metadata"), Mapping)
+            else None
+        )
+        if isinstance(expected_initial_hash, str) and (
+            expected_initial_hash != loaded_model_sha256
+        ):
+            raise ValueError(
+                "initial model checkpoint hash does not match its seed metadata"
+            )
+        initial_model_sha256 = loaded_model_sha256
+    elif not isinstance(initial_model_sha256, str):
+        loaded_model_sha256 = model_state_sha256(model)
+        logger.warning(
+            "resume checkpoint has no initial model hash; loaded_model_sha256=%s",
+            loaded_model_sha256,
+        )
+    logger.info("initial_model_sha256=%s", initial_model_sha256)
+    if training_config.save_initial_model_to is not None:
+        initial_output = Path(training_config.save_initial_model_to)
+        initial_output.parent.mkdir(parents=True, exist_ok=True)
+        torch.save(
+            {
+                "model": model.state_dict(),
+                "step": 0,
+                "seed_metadata": {
+                    "model_init_seed": resolved_seeds.model_init_seed,
+                    "initial_model_sha256": initial_model_sha256,
+                },
+            },
+            initial_output,
+        )
+        logger.info("saved_initial_model=%s", initial_output)
     freeze_summary = apply_freeze_mode(model, training_config.freeze_mode)
     logger.info(
         "freeze_mode=%s trainable_parameters=%d frozen_parameters=%d",
@@ -945,6 +1028,16 @@ def train(training_config: TrainingConfig) -> None:
         training_config, output_dir / "training_config.json"
     )
     logger.info("saved_training_config=%s", saved_training_config_path)
+    seed_manifest: dict[str, Any] = {
+        "legacy_seed": training_config.seed,
+        "model_init_seed": resolved_seeds.model_init_seed,
+        "data_order_seed": resolved_seeds.data_order_seed,
+        "train_runtime_seed": resolved_seeds.train_runtime_seed,
+        "initial_model_sha256": initial_model_sha256,
+        "loaded_model_sha256": loaded_model_sha256,
+        "resume_from_checkpoint": training_config.resume_from_checkpoint,
+        "rng_state_restored": False,
+    }
 
     append_metrics = training_config.resume_from_checkpoint is not None
     metrics_logger = TrainingMetricsLogger(
@@ -1125,6 +1218,15 @@ def train(training_config: TrainingConfig) -> None:
             num_workers=0,
         )
 
+    if isinstance(dataloader.dataset, PackedMixByteDataset):
+        seed_manifest["data_order"] = dataloader.dataset.order_audit()
+    seed_manifest_path = output_dir / "seed_manifest.json"
+    seed_manifest_path.write_text(
+        json.dumps(seed_manifest, ensure_ascii=False, indent=2) + "\n",
+        encoding="utf-8",
+    )
+    logger.info("saved_seed_manifest=%s", seed_manifest_path)
+
     target_steps = training_config.max_steps
     if training_config.max_train_bytes is not None:
         if training_config.max_train_bytes <= 0:
@@ -1196,6 +1298,22 @@ def train(training_config: TrainingConfig) -> None:
     scaler = torch.amp.GradScaler("cuda", enabled=use_grad_scaler)
     if device.type == "cuda":
         torch.cuda.reset_peak_memory_stats(device)
+    checkpoint_rng_state = (
+        resume_checkpoint.get("rng_state")
+        if isinstance(resume_checkpoint, Mapping)
+        else None
+    )
+    if isinstance(checkpoint_rng_state, Mapping):
+        restore_rng_state(checkpoint_rng_state)
+        seed_manifest["rng_state_restored"] = True
+        logger.info("resumed_rng_state=true")
+    else:
+        set_seed(resolved_seeds.train_runtime_seed)
+        logger.info("resumed_rng_state=false runtime_seed_applied=true")
+    seed_manifest_path.write_text(
+        json.dumps(seed_manifest, ensure_ascii=False, indent=2) + "\n",
+        encoding="utf-8",
+    )
     training_started_at = time.perf_counter()
 
     last_saved_step = 0
@@ -1570,6 +1688,13 @@ def train(training_config: TrainingConfig) -> None:
                 }
                 if use_packed_data
                 else None,
+                rng_state=capture_rng_state(),
+                seed_metadata={
+                    "model_init_seed": resolved_seeds.model_init_seed,
+                    "data_order_seed": resolved_seeds.data_order_seed,
+                    "train_runtime_seed": resolved_seeds.train_runtime_seed,
+                    "initial_model_sha256": initial_model_sha256,
+                },
             )
             if device.type == "cuda":
                 logger.info(
@@ -1597,5 +1722,12 @@ def train(training_config: TrainingConfig) -> None:
             }
             if use_packed_data
             else None,
+            rng_state=capture_rng_state(),
+            seed_metadata={
+                "model_init_seed": resolved_seeds.model_init_seed,
+                "data_order_seed": resolved_seeds.data_order_seed,
+                "train_runtime_seed": resolved_seeds.train_runtime_seed,
+                "initial_model_sha256": initial_model_sha256,
+            },
         )
         logger.info("saved_final_checkpoint=%s", checkpoint_path)

@@ -5,6 +5,8 @@ from collections import defaultdict
 from statistics import mean
 from typing import Any
 
+from .linguistic_boundary_identity import seed_identity
+
 
 def checkpoint_order(label: object) -> int:
     if isinstance(label, int):
@@ -42,9 +44,12 @@ def summarize_trajectory_scores(runs: list[dict[str, Any]]) -> list[dict[str, An
         tuple[str, object, str, str, str],
         dict[int, dict[str, dict[str, Any]]],
     ] = defaultdict(lambda: defaultdict(dict))
+    seed_metadata: dict[str, tuple[object, object]] = {}
 
     for run in runs:
         step = checkpoint_order(run.get("checkpoint_label"))
+        identity = seed_identity(run)
+        seed_metadata[identity] = (run.get("seed"), run.get("seed_factors"))
         for record in run["records"]:
             dimensions = ("__all__", record["category"])
             for condition, result in record["conditions"].items():
@@ -52,7 +57,7 @@ def summarize_trajectory_scores(runs: list[dict[str, Any]]) -> list[dict[str, An
                     for dimension in dimensions:
                         key = (
                             run["model_name"],
-                            run.get("seed"),
+                            identity,
                             condition,
                             stage,
                             dimension,
@@ -68,7 +73,7 @@ def summarize_trajectory_scores(runs: list[dict[str, Any]]) -> list[dict[str, An
     for key, checkpoints in sorted(groups.items(), key=lambda item: str(item[0])):
         if len(checkpoints) < 2:
             continue
-        model_name, seed, condition, stage, dimension = key
+        model_name, identity, condition, stage, dimension = key
         steps = sorted(checkpoints)
         all_scores = [
             score
@@ -107,7 +112,9 @@ def summarize_trajectory_scores(runs: list[dict[str, Any]]) -> list[dict[str, An
         rows.append(
             {
                 "model_name": model_name,
-                "seed": seed,
+                "seed": seed_metadata[identity][0],
+                "seed_identity": identity,
+                "seed_factors": seed_metadata[identity][1],
                 "condition": condition,
                 "stage": stage,
                 "category": dimension,

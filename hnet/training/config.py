@@ -49,8 +49,13 @@ class TrainingConfig:
     compression_ratios: list[float] = field(default_factory=lambda: [4.0])
     lr_multipliers: list[float] = field(default_factory=lambda: [1.0, 1.0])
     seed: int = 42
+    model_init_seed: int | None = None
+    data_order_seed: int | None = None
+    train_runtime_seed: int | None = None
     num_workers: int = 0
     shuffle_buffer_size: int = 512
+    initial_model_checkpoint: str | None = None
+    save_initial_model_to: str | None = None
     resume_from_checkpoint: str | None = None
     resume_optimizer: bool = True
     resume_step: bool = True

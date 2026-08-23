@@ -5,6 +5,8 @@ from dataclasses import dataclass
 from statistics import mean
 from typing import Any, Iterable
 
+from .linguistic_boundary_identity import linguistic_run_id
+
 @dataclass(frozen=True)
 class FamilyLandmark:
     name: str
@@ -75,7 +77,7 @@ def summarize_family_scores(
     metadata: dict[tuple[str, str, str, str], dict[str, Any]] = {}
 
     for run in runs:
-        run_id = f"{run['model_name']}|{run.get('seed')}|{run.get('checkpoint_label')}"
+        run_id = linguistic_run_id(run)
         for record in run["records"]:
             family = record.get("family")
             if family is None:
@@ -97,6 +99,7 @@ def summarize_family_scores(
                     metadata[key] = {
                         "model_name": run["model_name"],
                         "seed": run.get("seed"),
+                        "seed_factors": run.get("seed_factors"),
                         "checkpoint_label": run.get("checkpoint_label"),
                     }
                     selected = set(score["selected_evaluable_offsets"])

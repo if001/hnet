@@ -19,6 +19,7 @@ from scripts.run_boundary_calibration import (
     git_output,
     ratio_tag,
     run_and_log,
+    sha256_file,
 )
 
 
@@ -31,6 +32,11 @@ OUTER_COMPRESSION_TARGETS = {
     "k3t1": 3.0,
     "k1first_mix": 2.5,
     "k3first_mix": 2.5,
+    "k14g12_front": 2.5,
+    "k14g12_middle": 2.5,
+    "k14g12_late": 2.5,
+    "k15g11_split": 2.5,
+    "k16g10_even": 2.5,
 }
 
 
@@ -43,10 +49,27 @@ def dense_steps(max_steps: int) -> tuple[int, ...]:
 
 
 def run_name(
-    main_network: str, seed: int, commit: str, max_steps: int = 220
+    main_network: str,
+    seed: int,
+    commit: str,
+    max_steps: int = 220,
+    *,
+    model_init_seed: int | None = None,
+    data_order_seed: int | None = None,
+    train_runtime_seed: int | None = None,
 ) -> str:
+    if any(
+        value is not None
+        for value in (model_init_seed, data_order_seed, train_runtime_seed)
+    ):
+        init_seed = seed if model_init_seed is None else model_init_seed
+        data_seed = seed if data_order_seed is None else data_order_seed
+        runtime_seed = seed if train_runtime_seed is None else train_runtime_seed
+        seed_tag = f"i{init_seed}_d{data_seed}_r{runtime_seed}"
+    else:
+        seed_tag = f"s{seed}"
     return (
-        f"r6_dense_family_v1_{main_network}_s{seed}_"
+        f"r6_dense_family_v1_{main_network}_{seed_tag}_"
         f"step{max_steps}_{commit[:7]}"
     )
 
@@ -74,12 +97,49 @@ def copy_resume_artifacts(source: Path, destination: Path) -> Path:
     return destination / checkpoint.name
 
 
+def resume_seed_factors(source: Path) -> dict[str, int]:
+    config_path = source / "dense_run_config.json"
+    if not config_path.is_file():
+        raise FileNotFoundError(config_path)
+    payload = json.loads(config_path.read_text(encoding="utf-8"))
+    factors = payload.get("seed_factors")
+    if isinstance(factors, dict) and all(
+        isinstance(factors.get(key), int)
+        for key in ("model_init_seed", "data_order_seed", "train_runtime_seed")
+    ):
+        return {
+            key: int(factors[key])
+            for key in ("model_init_seed", "data_order_seed", "train_runtime_seed")
+        }
+    legacy_seed = payload.get("seed")
+    if not isinstance(legacy_seed, int):
+        raise ValueError(f"resume source has no valid seed metadata: {config_path}")
+    return {
+        "model_init_seed": legacy_seed,
+        "data_order_seed": legacy_seed,
+        "train_runtime_seed": legacy_seed,
+    }
+
+
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Run dense family-boundary training.")
     parser.add_argument(
         "--main", choices=sorted(OUTER_COMPRESSION_TARGETS), required=True
     )
     parser.add_argument("--seed", type=int, default=42)
+    parser.add_argument("--model-init-seed", type=int)
+    parser.add_argument("--data-order-seed", type=int)
+    parser.add_argument("--train-runtime-seed", type=int)
+    parser.add_argument(
+        "--initial-model-checkpoint",
+        type=Path,
+        help="Exact step-0 state used for data-order-only comparisons.",
+    )
+    parser.add_argument(
+        "--save-initial-model-to",
+        type=Path,
+        help="Optional path for the exact pre-training model state.",
+    )
     parser.add_argument("--max-steps", type=int, choices=[55, 220], default=220)
     parser.add_argument(
         "--resume-run-dir",
@@ -117,7 +177,26 @@ def main() -> None:
         raise ValueError("dense family probe must contain 24 unique texts")
 
     commit = git_output("rev-parse", "HEAD")
-    name = run_name(args.main, args.seed, commit, args.max_steps)
+    resolved_seeds = {
+        "model_init_seed": (
+            args.seed if args.model_init_seed is None else args.model_init_seed
+        ),
+        "data_order_seed": (
+            args.seed if args.data_order_seed is None else args.data_order_seed
+        ),
+        "train_runtime_seed": (
+            args.seed if args.train_runtime_seed is None else args.train_runtime_seed
+        ),
+    }
+    name = run_name(
+        args.main,
+        args.seed,
+        commit,
+        args.max_steps,
+        model_init_seed=resolved_seeds["model_init_seed"],
+        data_order_seed=resolved_seeds["data_order_seed"],
+        train_runtime_seed=resolved_seeds["train_runtime_seed"],
+    )
     run_dir = args.work_root / "runs" / name
     archive_dir = args.archive_root / name
     if run_dir.exists() or archive_dir.exists():
@@ -125,10 +204,19 @@ def main() -> None:
     if args.resume_run_dir is not None:
         if args.max_steps != 220:
             raise ValueError("--resume-run-dir requires --max-steps 220")
+        source_seeds = resume_seed_factors(args.resume_run_dir)
+        if source_seeds != resolved_seeds:
+            raise ValueError(
+                f"resume seed mismatch: source={source_seeds} requested={resolved_seeds}"
+            )
         resume_checkpoint = copy_resume_artifacts(args.resume_run_dir, run_dir)
     else:
         run_dir.mkdir(parents=True)
         resume_checkpoint = None
+    if args.initial_model_checkpoint is not None and resume_checkpoint is not None:
+        raise ValueError(
+            "--initial-model-checkpoint cannot be combined with --resume-run-dir"
+        )
 
     command = [
         sys.executable,
@@ -181,11 +269,23 @@ def main() -> None:
         "1",
         "--seed",
         str(args.seed),
+        "--model-init-seed",
+        str(resolved_seeds["model_init_seed"]),
+        "--data-order-seed",
+        str(resolved_seeds["data_order_seed"]),
+        "--train-runtime-seed",
+        str(resolved_seeds["train_runtime_seed"]),
         "--num-workers",
         "0",
     ]
     if resume_checkpoint is not None:
         command.extend(["--resume-from-checkpoint", str(resume_checkpoint)])
+    if args.initial_model_checkpoint is not None:
+        command.extend(
+            ["--initial-model-checkpoint", str(args.initial_model_checkpoint)]
+        )
+    if args.save_initial_model_to is not None:
+        command.extend(["--save-initial-model-to", str(args.save_initial_model_to)])
     for prompt in prompts:
         command.extend(["--chunk-prompt", prompt])
     (run_dir / "dense_run_config.json").write_text(
@@ -195,9 +295,27 @@ def main() -> None:
                 "commit": commit,
                 "main": args.main,
                 "seed": args.seed,
+                "seed_factors": resolved_seeds,
                 "probe": str(args.probe),
+                "model_config_sha256": sha256_file(Path(MODEL_CONFIGS[args.main])),
+                "packed_data_manifest_sha256": sha256_file(
+                    args.packed_data_dir / "mix_manifest.json"
+                ),
+                "packed_validation_manifest_sha256": sha256_file(
+                    args.packed_validation_data_dir / "mix_manifest.json"
+                ),
                 "resume_run_dir": (
                     str(args.resume_run_dir) if args.resume_run_dir is not None else None
+                ),
+                "initial_model_checkpoint": (
+                    str(args.initial_model_checkpoint)
+                    if args.initial_model_checkpoint is not None
+                    else None
+                ),
+                "save_initial_model_to": (
+                    str(args.save_initial_model_to)
+                    if args.save_initial_model_to is not None
+                    else None
                 ),
                 "command": command,
             },
@@ -234,6 +352,12 @@ def main() -> None:
             args.main,
             "--seed",
             str(args.seed),
+            "--model-init-seed",
+            str(resolved_seeds["model_init_seed"]),
+            "--data-order-seed",
+            str(resolved_seeds["data_order_seed"]),
+            "--train-runtime-seed",
+            str(resolved_seeds["train_runtime_seed"]),
             "--output-dir",
             str(raw_dir),
         ],

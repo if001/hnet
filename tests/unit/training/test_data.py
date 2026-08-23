@@ -71,3 +71,40 @@ def test_packed_dataset_supports_uint32_tokens_and_raw_byte_lengths(tmp_path) ->
     assert sample["labels"].tolist() == [4, 5, 2]
     assert sample["target_byte_lengths"].tolist() == [3, 1, 0]
     assert not bool(sample["is_byte_level"])
+
+
+def test_packed_dataset_order_audit_is_seed_specific_and_reproducible(tmp_path) -> None:
+    source_dir = tmp_path / "datasets" / "source"
+    source_dir.mkdir(parents=True)
+    np.arange(40, dtype=np.uint8).tofile(source_dir / "data-00000.bin")
+    (source_dir / "manifest.json").write_text(
+        json.dumps(
+            {
+                "dtype": "uint8",
+                "shards": [{"bin_file": "data-00000.bin", "token_count": 40}],
+            }
+        ),
+        encoding="utf-8",
+    )
+    (tmp_path / "mix_manifest.json").write_text(
+        json.dumps(
+            {
+                "datasets": [
+                    {"name": "source", "manifest": "datasets/source/manifest.json"}
+                ],
+                "is_byte_level": True,
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    first = PackedMixByteDataset(tmp_path, seq_len=3, shuffle=True, seed=42)
+    repeated = PackedMixByteDataset(tmp_path, seq_len=3, shuffle=True, seed=42)
+    changed = PackedMixByteDataset(tmp_path, seq_len=3, shuffle=True, seed=43)
+
+    first_audit = first.order_audit(sample_limit=4)
+    assert first_audit == repeated.order_audit(sample_limit=4)
+    assert first_audit["shuffle_index_sha256"] != changed.order_audit()[
+        "shuffle_index_sha256"
+    ]
+    assert len(first_audit["sample_prefix"]) == 4

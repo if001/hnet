@@ -8,6 +8,13 @@ CONFIGS = {
     "k1first_mix": REPOSITORY_ROOT / "configs/hnet_2stage_200m_k1first_mix.json",
     "k3first_mix": REPOSITORY_ROOT / "configs/hnet_2stage_200m_k3first_mix.json",
 }
+SCREENING_CONFIGS = {
+    "k14g12_front": REPOSITORY_ROOT / "configs/hnet_2stage_200m_k14g12_front.json",
+    "k14g12_middle": REPOSITORY_ROOT / "configs/hnet_2stage_200m_k14g12_middle.json",
+    "k14g12_late": REPOSITORY_ROOT / "configs/hnet_2stage_200m_k14g12_late.json",
+    "k15g11_split": REPOSITORY_ROOT / "configs/hnet_2stage_200m_k15g11_split.json",
+    "k16g10_even": REPOSITORY_ROOT / "configs/hnet_2stage_200m_k16g10_even.json",
+}
 
 
 def _load(path: Path) -> dict:
@@ -43,3 +50,41 @@ def test_mixed_configs_use_the_planned_order() -> None:
     layouts = {name: _main_layout(_load(path)) for name, path in CONFIGS.items()}
     assert layouts["k1first_mix"] == "K1G1" * 7 + "K3G1" * 3
     assert layouts["k3first_mix"] == "K3G1" * 3 + "K1G1" * 7
+
+
+def test_factorized_screening_configs_use_planned_counts_and_order() -> None:
+    layouts = {name: _main_layout(_load(path)) for name, path in SCREENING_CONFIGS.items()}
+    assert layouts == {
+        "k14g12_front": "K3G1" + "K1G1" * 11,
+        "k14g12_middle": "K1G1" * 5 + "K3G1" + "K1G1" * 6,
+        "k14g12_late": "K1G1" * 11 + "K3G1",
+        "k15g11_split": "K3G1" + "K1G1" * 9 + "K3G1",
+        "k16g10_even": (
+            "K1G1" * 2
+            + "K3G1"
+            + "K1G1" * 2
+            + "K3G1"
+            + "K1G1" * 2
+            + "K3G1"
+            + "K1G1"
+        ),
+    }
+    expected = {
+        "k14g12_front": {"K": 14, "G": 12, "T": 0},
+        "k14g12_middle": {"K": 14, "G": 12, "T": 0},
+        "k14g12_late": {"K": 14, "G": 12, "T": 0},
+        "k15g11_split": {"K": 15, "G": 11, "T": 0},
+        "k16g10_even": {"K": 16, "G": 10, "T": 0},
+    }
+    for name, layout in layouts.items():
+        counts = _layer_counts(layout)
+        assert counts == expected[name]
+        assert sum(counts.values()) == 26
+
+    reference = _load(REPOSITORY_ROOT / "configs/hnet_2stage_200m_k1g1.json")
+    for path in SCREENING_CONFIGS.values():
+        candidate = _load(path)
+        assert {**candidate, "arch_layout": None} == {
+            **reference,
+            "arch_layout": None,
+        }

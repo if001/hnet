@@ -86,6 +86,22 @@ transitionは`.577`から`.727`まで広く分布した。K15-splitのtransition
 
 ### 3.2 K1G1との同一step paired比較
 
+この比較では、K1G1のstep 10と各構成のstep 10、step 20同士、以後同様にstep 50までを対応付けた。
+同じstepでは、同じdata orderの同じraw batch列、同じ累積入力byte数、同じoptimizer update数を経験している。
+目的は、各時点で「同じraw学習量を与えたときの境界品質」がarchitectureによってどう異なるかを、学習中の
+共通変動を揃えて比較することである。これは学習効率を含むfixed-training-dose比較である。
+
+この比較は、構成が異なってもcategory、文節、family等の境界が同じ順序・同じ速度で形成されることを仮定
+しない。実際には、ある構成ではcategory precisionが早く形成され、別の構成では文節境界が後から形成される
+など、境界学習の位相がずれる可能性がある。また、raw入力byte数が同じでも、compressionと分割が異なるため、
+main networkが処理する実効chunk数や「境界形成の成熟度」が同じとは限らない。
+
+したがって同一stepでの正の差は、「同じ学習量でその時点までに高い品質へ到達した」ことを表すが、遅れて
+形成される構成の最終品質が低いことまでは表さない。単一のearly stepだけの差は形成速度の差である可能性が
+あり、architecture固有の持続的なbiasと解釈するには、複数stepでの方向一致とlate windowで差が残ることを
+併せて確認する。本レポートのpaired勝率とlate集計はこの目的で用いる。一方、形成位相そのものを揃えるには、
+今後、同じcoverage、選択境界数、またはcompression水準で比較するmatched-state評価が別途必要である。
+
 表は`median delta (改善step数/比較可能step数)`を示す。fractureは負が改善である。precisionは主に4時点、
 coverageとfractureは5時点の比較である。
 

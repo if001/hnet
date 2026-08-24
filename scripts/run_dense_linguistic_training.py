@@ -82,13 +82,14 @@ def load_probe_prompts(path: Path) -> tuple[dict[str, object], list[str]]:
     records = payload.get("records")
     if not isinstance(records, list) or not records:
         raise ValueError("dense probe must contain at least one record")
-    prompts = [record.get("text") for record in records if isinstance(record, dict)]
-    if len(prompts) != len(records) or not all(
-        isinstance(prompt, str) and prompt.strip() for prompt in prompts
+    record_texts = [
+        record.get("text") for record in records if isinstance(record, dict)
+    ]
+    if len(record_texts) != len(records) or not all(
+        isinstance(prompt, str) and prompt.strip() for prompt in record_texts
     ):
         raise ValueError("every dense probe record must contain non-empty text")
-    if len(set(prompts)) != len(prompts):
-        raise ValueError("dense probe record texts must be unique")
+    prompts = list(dict.fromkeys(record_texts))
     return payload, prompts
 
 
@@ -322,7 +323,8 @@ def main() -> None:
                 "seed": args.seed,
                 "seed_factors": resolved_seeds,
                 "probe": str(args.probe),
-                "probe_record_count": len(prompts),
+                "probe_record_count": len(_probe["records"]),
+                "probe_unique_prompt_count": len(prompts),
                 "probe_sha256": sha256_file(args.probe),
                 "run_prefix": args.run_prefix,
                 "model_config_sha256": sha256_file(Path(MODEL_CONFIGS[args.main])),

@@ -1,7 +1,5 @@
 import json
 
-import pytest
-
 from scripts.run_dense_linguistic_training import (
     DENSE_STEPS,
     LR_SCHEDULE_STEPS,
@@ -75,7 +73,7 @@ def test_dense_run_name_supports_temporal_full112_prefix() -> None:
     ) == "r7_dense_full112_temporal_v1_k1g1_i42_d42_r42_step55_abcdef0"
 
 
-def test_load_probe_prompts_accepts_full112_and_rejects_duplicates(tmp_path) -> None:
+def test_load_probe_prompts_accepts_full112_and_deduplicates_prompts(tmp_path) -> None:
     probe = tmp_path / "probe.json"
     records = [{"text": f"probe-{index}"} for index in range(112)]
     probe.write_text(json.dumps({"records": records}), encoding="utf-8")
@@ -83,12 +81,11 @@ def test_load_probe_prompts_accepts_full112_and_rejects_duplicates(tmp_path) -> 
     assert payload["records"] == records
     assert len(prompts) == 112
 
-    probe.write_text(
-        json.dumps({"records": [{"text": "same"}, {"text": "same"}]}),
-        encoding="utf-8",
-    )
-    with pytest.raises(ValueError, match="unique"):
-        load_probe_prompts(probe)
+    duplicate_records = [{"text": "same"}, {"text": "same"}]
+    probe.write_text(json.dumps({"records": duplicate_records}), encoding="utf-8")
+    payload, prompts = load_probe_prompts(probe)
+    assert payload["records"] == duplicate_records
+    assert prompts == ["same"]
 
 
 def test_copy_resume_artifacts_requires_complete_step55_run(tmp_path) -> None:

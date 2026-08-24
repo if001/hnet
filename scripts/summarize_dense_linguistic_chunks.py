@@ -14,6 +14,22 @@ if str(REPOSITORY_ROOT) not in sys.path:
 from hnet.training.linguistic_boundaries import FocusAnnotation, score_focus_boundaries
 
 
+def align_probe_observations(
+    probe_records: list[dict[str, Any]],
+    report_records: list[dict[str, Any]],
+) -> list[tuple[dict[str, Any], dict[str, Any]]]:
+    report_by_text = {record["text"]: record for record in report_records}
+    if len(report_by_text) != len(report_records):
+        raise ValueError("chunk report texts must be unique")
+    expected_texts = {record["text"] for record in probe_records}
+    if set(report_by_text) != expected_texts:
+        raise ValueError("probe/report text mismatch")
+    return [
+        (annotation_record, report_by_text[annotation_record["text"]])
+        for annotation_record in probe_records
+    ]
+
+
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
         description="Convert in-training chunk JSON reports to probe result JSON."
@@ -42,9 +58,10 @@ def load_cumulative_bytes(path: Path) -> dict[int, int]:
 def main() -> None:
     args = parse_args()
     probe = json.loads(args.probe.read_text(encoding="utf-8"))
-    records_by_text = {record["text"]: record for record in probe["records"]}
-    if len(records_by_text) != len(probe["records"]):
-        raise ValueError("dense probe record texts must be unique")
+    probe_records = probe["records"]
+    record_ids = [record["id"] for record in probe_records]
+    if len(set(record_ids)) != len(record_ids):
+        raise ValueError("dense probe record ids must be unique")
     cumulative_bytes = load_cumulative_bytes(args.training_metrics)
     reports = sorted(args.chunk_report_dir.glob("chunks_step_*.json"))
     if not reports:
@@ -54,12 +71,15 @@ def main() -> None:
     for report_path in reports:
         report = json.loads(report_path.read_text(encoding="utf-8"))
         step = int(report["step"])
-        report_by_text = {record["text"]: record for record in report["records"]}
-        if set(report_by_text) != set(records_by_text):
-            raise ValueError(f"probe/report text mismatch: {report_path}")
         output_records: list[dict[str, Any]] = []
-        for text, annotation_record in records_by_text.items():
-            observed = report_by_text[text]
+        try:
+            aligned_records = align_probe_observations(
+                probe_records, report["records"]
+            )
+        except ValueError as error:
+            raise ValueError(f"{error}: {report_path}") from error
+        for annotation_record, observed in aligned_records:
+            text = annotation_record["text"]
             focus = annotation_record["focus"]
             annotation = FocusAnnotation(
                 surface=focus["surface"],

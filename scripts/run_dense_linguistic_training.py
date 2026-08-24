@@ -93,6 +93,11 @@ def load_probe_prompts(path: Path) -> tuple[dict[str, object], list[str]]:
     return payload, prompts
 
 
+def chunk_prompt_arg(prompt: str) -> str:
+    """Keep option-looking probe text attached to its argparse option."""
+    return f"--chunk-prompt={prompt}"
+
+
 def copy_resume_artifacts(source: Path, destination: Path) -> Path:
     checkpoint = source / "checkpoint_step_000055.pt"
     chunks = source / "validation_chunks"
@@ -313,7 +318,7 @@ def main() -> None:
     if args.save_initial_model_to is not None:
         command.extend(["--save-initial-model-to", str(args.save_initial_model_to)])
     for prompt in prompts:
-        command.extend(["--chunk-prompt", prompt])
+        command.append(chunk_prompt_arg(prompt))
     (run_dir / "dense_run_config.json").write_text(
         json.dumps(
             {

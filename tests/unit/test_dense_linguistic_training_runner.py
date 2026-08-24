@@ -3,6 +3,7 @@ import json
 from scripts.run_dense_linguistic_training import (
     DENSE_STEPS,
     LR_SCHEDULE_STEPS,
+    chunk_prompt_arg,
     OUTER_COMPRESSION_TARGETS,
     checkpoint_steps,
     copy_resume_artifacts,
@@ -11,6 +12,12 @@ from scripts.run_dense_linguistic_training import (
     resume_seed_factors,
     run_name,
 )
+
+
+def test_chunk_prompt_arg_preserves_option_looking_text() -> None:
+    assert chunk_prompt_arg("--learning-rateを指定する。") == (
+        "--chunk-prompt=--learning-rateを指定する。"
+    )
 
 
 def test_dense_run_name_records_main_seed_and_commit() -> None:

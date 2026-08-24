@@ -110,3 +110,47 @@ fractureが退行した。
 
 集計JSON:
 `/content/drive/MyDrive/hnet_agent_200m_main/reports/kda_factorized_screening/phase1_new6/phase1_analysis.json`
+
+## Phase 2完了
+
+K1G1、K15-split、K16-evenについて、init-43、init-44、data-43、data-44を55 stepで実行した。
+baselineはPhase 1を再利用した。12runと12件のfull112評価はすべてreturn code 0で完了した。
+
+seed auditでは次を確認した。
+
+- init系列: shuffle hashがbaselineと一致し、step 0 weight hashだけが変化した。
+- data系列: step 0 weight hashがbaselineと完全一致し、shuffle hashだけが変化した。
+- 全runにstep 55 checkpointとdense 5時点が揃った。
+
+### Paired方向一致
+
+候補−K1G1のcentral、stage 1差を同じseed factor内で比較した。
+
+| 候補・系列 | category P/C改善 | 文節 P/C改善 | family P/C改善 | dense fracture改善 |
+| --- | --- | --- | --- | --- |
+| K15-split init | 2/3, 2/3 | 1/3, 1/3 | 2/3, 2/3 | 1/3 |
+| K15-split data | 2/3, 2/3 | 3/3, 3/3 | 0/3, 0/3 | 0/3 |
+| K16-even init | 2/3, 1/3 | 2/3, 2/3 | 2/3, 1/3 | 2/3 |
+| K16-even data | 3/3, 3/3 | 3/3, 3/3 | 0/3, 0/3 | 0/3 |
+
+K15-splitの文節改善はdata系列では強いがinit系列で再現しない。K16-evenは文節改善をinit系列2/3、
+data系列3/3で再現し、data系列ではcategory precision/coverageも3/3で改善した。一方、K16-evenの
+data系列平均差はfamily precision `-.153`、family coverage `-.109`、dense fracture occupancy
+`+.131`、late fracture occupancy `+.340`であり、文節・category改善と同時にfamily/低fractureを
+維持できなかった。
+
+4 profile別に確認しても、K16-evenのdata系列は全profileで文節P/Cが3/3改善する一方、family coverageは
+low/central/nativeで0/3、highで1/3だった。centralだけの偶然ではなく、再現するtrade-offである。
+
+### 停止判断
+
+K15-splitはweight初期値に対して文節改善が頑健でなく、K16-evenは文節改善が比較的頑健だがfamilyと
+fractureを維持しない。計画の「K1G1のfamily/landmark/低fractureを大きく損なわず文節を改善する」
+combined条件を満たす候補はない。このためPhase 3の220-step延長とcrossed cellは実施せず、K1G1を
+長時間候補のanchorとして維持する。
+
+Drive artifacts:
+
+- `manifests/kda_factorized_screening/phase2_artifact_seed_audit.json`
+- `manifests/kda_factorized_screening/phase2_full112_status.json`
+- `reports/kda_factorized_screening/phase2_ofat_analysis.json`

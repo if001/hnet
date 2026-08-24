@@ -1,3 +1,7 @@
+import json
+
+import pytest
+
 from scripts.run_dense_linguistic_training import (
     DENSE_STEPS,
     LR_SCHEDULE_STEPS,
@@ -5,6 +9,7 @@ from scripts.run_dense_linguistic_training import (
     checkpoint_steps,
     copy_resume_artifacts,
     dense_steps,
+    load_probe_prompts,
     resume_seed_factors,
     run_name,
 )
@@ -35,6 +40,7 @@ def test_dense_targets_include_combined_pareto_candidates() -> None:
         "k14g12_late": 2.5,
         "k15g11_split": 2.5,
         "k16g10_even": 2.5,
+        "t26": 2.5,
     }
 
 
@@ -54,6 +60,35 @@ def test_dense_run_name_records_factorized_seeds() -> None:
         data_order_seed=44,
         train_runtime_seed=42,
     ) == "r6_dense_family_v1_k14g12_late_i43_d44_r42_step55_abcdef0"
+
+
+def test_dense_run_name_supports_temporal_full112_prefix() -> None:
+    assert run_name(
+        "k1g1",
+        42,
+        "abcdef0123",
+        55,
+        model_init_seed=42,
+        data_order_seed=42,
+        train_runtime_seed=42,
+        run_prefix="r7_dense_full112_temporal_v1",
+    ) == "r7_dense_full112_temporal_v1_k1g1_i42_d42_r42_step55_abcdef0"
+
+
+def test_load_probe_prompts_accepts_full112_and_rejects_duplicates(tmp_path) -> None:
+    probe = tmp_path / "probe.json"
+    records = [{"text": f"probe-{index}"} for index in range(112)]
+    probe.write_text(json.dumps({"records": records}), encoding="utf-8")
+    payload, prompts = load_probe_prompts(probe)
+    assert payload["records"] == records
+    assert len(prompts) == 112
+
+    probe.write_text(
+        json.dumps({"records": [{"text": "same"}, {"text": "same"}]}),
+        encoding="utf-8",
+    )
+    with pytest.raises(ValueError, match="unique"):
+        load_probe_prompts(probe)
 
 
 def test_copy_resume_artifacts_requires_complete_step55_run(tmp_path) -> None:

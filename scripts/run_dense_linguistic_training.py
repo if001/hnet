@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import re
 import shutil
 import subprocess
 import sys
@@ -37,6 +38,7 @@ OUTER_COMPRESSION_TARGETS = {
     "k14g12_late": 2.5,
     "k15g11_split": 2.5,
     "k16g10_even": 2.5,
+    "t26": 2.5,
 }
 
 
@@ -57,6 +59,7 @@ def run_name(
     model_init_seed: int | None = None,
     data_order_seed: int | None = None,
     train_runtime_seed: int | None = None,
+    run_prefix: str = "r6_dense_family_v1",
 ) -> str:
     if any(
         value is not None
@@ -69,9 +72,24 @@ def run_name(
     else:
         seed_tag = f"s{seed}"
     return (
-        f"r6_dense_family_v1_{main_network}_{seed_tag}_"
+        f"{run_prefix}_{main_network}_{seed_tag}_"
         f"step{max_steps}_{commit[:7]}"
     )
+
+
+def load_probe_prompts(path: Path) -> tuple[dict[str, object], list[str]]:
+    payload = json.loads(path.read_text(encoding="utf-8"))
+    records = payload.get("records")
+    if not isinstance(records, list) or not records:
+        raise ValueError("dense probe must contain at least one record")
+    prompts = [record.get("text") for record in records if isinstance(record, dict)]
+    if len(prompts) != len(records) or not all(
+        isinstance(prompt, str) and prompt.strip() for prompt in prompts
+    ):
+        raise ValueError("every dense probe record must contain non-empty text")
+    if len(set(prompts)) != len(prompts):
+        raise ValueError("dense probe record texts must be unique")
+    return payload, prompts
 
 
 def copy_resume_artifacts(source: Path, destination: Path) -> Path:
@@ -154,6 +172,11 @@ def parse_args() -> argparse.Namespace:
         default=Path("configs/linguistic_boundary_family_probe_v1.json"),
     )
     parser.add_argument(
+        "--run-prefix",
+        default="r6_dense_family_v1",
+        help="Artifact name prefix; use a distinct value for a new probe protocol.",
+    )
+    parser.add_argument(
         "--work-root", type=Path, default=Path("/content/hnet_agent_200m_main_work")
     )
     parser.add_argument(
@@ -171,10 +194,11 @@ def main() -> None:
     for path in (args.packed_data_dir, args.packed_validation_data_dir):
         if not path.is_dir() or not (path / "mix_manifest.json").is_file():
             raise FileNotFoundError(path)
-    probe = json.loads(args.probe.read_text(encoding="utf-8"))
-    prompts = [record["text"] for record in probe["records"]]
-    if len(prompts) != 24 or len(set(prompts)) != len(prompts):
-        raise ValueError("dense family probe must contain 24 unique texts")
+    if re.fullmatch(r"[a-z0-9][a-z0-9_-]*", args.run_prefix) is None:
+        raise ValueError(
+            "--run-prefix must contain only lowercase letters, digits, _ or -"
+        )
+    _probe, prompts = load_probe_prompts(args.probe)
 
     commit = git_output("rev-parse", "HEAD")
     resolved_seeds = {
@@ -196,6 +220,7 @@ def main() -> None:
         model_init_seed=resolved_seeds["model_init_seed"],
         data_order_seed=resolved_seeds["data_order_seed"],
         train_runtime_seed=resolved_seeds["train_runtime_seed"],
+        run_prefix=args.run_prefix,
     )
     run_dir = args.work_root / "runs" / name
     archive_dir = args.archive_root / name
@@ -297,6 +322,9 @@ def main() -> None:
                 "seed": args.seed,
                 "seed_factors": resolved_seeds,
                 "probe": str(args.probe),
+                "probe_record_count": len(prompts),
+                "probe_sha256": sha256_file(args.probe),
+                "run_prefix": args.run_prefix,
                 "model_config_sha256": sha256_file(Path(MODEL_CONFIGS[args.main])),
                 "packed_data_manifest_sha256": sha256_file(
                     args.packed_data_dir / "mix_manifest.json"

@@ -47,6 +47,25 @@ def test_rng_state_round_trip_restores_all_cpu_generators() -> None:
     assert torch.equal(actual[2], expected[2])
 
 
+def test_restore_rng_state_normalizes_cuda_states_to_cpu_byte_tensors(
+    monkeypatch,
+) -> None:
+    set_global_seed(23)
+    state = capture_rng_state()
+    state["torch_cuda"] = [torch.arange(8, dtype=torch.int64)]
+    restored: list[list[torch.Tensor]] = []
+    monkeypatch.setattr(torch.cuda, "is_available", lambda: True)
+    monkeypatch.setattr(torch.cuda, "set_rng_state_all", restored.append)
+
+    restore_rng_state(state)
+
+    assert len(restored) == 1
+    assert len(restored[0]) == 1
+    assert restored[0][0].device.type == "cpu"
+    assert restored[0][0].dtype == torch.uint8
+    assert restored[0][0].is_contiguous()
+
+
 def test_model_state_hash_tracks_exact_initial_values() -> None:
     set_global_seed(31)
     left = torch.nn.Linear(4, 3)

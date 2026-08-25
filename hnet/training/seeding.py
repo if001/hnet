@@ -54,6 +54,12 @@ def capture_rng_state() -> dict[str, Any]:
     return state
 
 
+def _cpu_byte_rng_state(value: object) -> torch.Tensor:
+    if not torch.is_tensor(value):
+        raise ValueError("checkpoint torch RNG state must be a tensor")
+    return value.detach().to(device="cpu", dtype=torch.uint8).contiguous()
+
+
 def restore_rng_state(state: Mapping[str, Any]) -> None:
     python_state = state.get("python")
     numpy_state = state.get("numpy")
@@ -62,10 +68,14 @@ def restore_rng_state(state: Mapping[str, Any]) -> None:
         raise ValueError("checkpoint RNG state is incomplete")
     random.setstate(python_state)
     np.random.set_state(numpy_state)
-    torch.set_rng_state(torch_cpu_state.cpu())
+    torch.set_rng_state(_cpu_byte_rng_state(torch_cpu_state))
     cuda_state = state.get("torch_cuda")
     if torch.cuda.is_available() and cuda_state is not None:
-        torch.cuda.set_rng_state_all(cuda_state)
+        if not isinstance(cuda_state, (list, tuple)):
+            raise ValueError("checkpoint CUDA RNG state must be a sequence")
+        torch.cuda.set_rng_state_all(
+            [_cpu_byte_rng_state(device_state) for device_state in cuda_state]
+        )
 
 
 def model_state_sha256(model: torch.nn.Module) -> str:

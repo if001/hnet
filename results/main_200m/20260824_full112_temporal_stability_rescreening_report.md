@@ -84,6 +84,11 @@ transitionは`.577`から`.727`まで広く分布した。K15-splitのtransition
 維持したという診断値であり、その分割が全categoryに良いことを意味しない。K14-lateの最大値も、説明可能な
 別境界への移行を含むため、それだけで失格とはしない。
 
+• K3-first: precision重視
+• K14-middle: 品質制約を含む均衡型
+• K14-front: landmark・文節型
+• K14-late: coverage重視
+
 ### 3.2 K1G1との同一step paired比較
 
 この比較では、K1G1のstep 10と各構成のstep 10、step 20同士、以後同様にstep 50までを対応付けた。
@@ -145,6 +150,63 @@ K1G1以下だった。K3G1はfractureが全5時点で悪化し、K3T1はfamily�
 lateでもK14-middleはcategory precision、低fracture、family coverage、landmarkを同時に維持した。ただし
 integrity `.778`はK1G1 `.944`より低い。K15-splitの文節coverage `.580`は突出しているが、family coverageは
 K1G1を下回る。このため、平均だけでなくlateでもcombinedな完全改善は成立しない。
+
+### 3.4 構成別のstep軌跡
+
+K1G1、K15-split、K14-middleについて、native・stage 1のstep別実値を示す。列は3.3のlate windowと
+同じ9指標である。`category F`はfracture record occupancyであり、小さいほどよい。`—`は選択された評価可能
+境界が0件でprecisionを定義できないことを示し、precisionが`.000`である場合と区別する。
+
+#### K1G1
+
+| step | category P | category C | category F | family P | family C | landmark C | integrity | 文節 P | 文節 C |
+| ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
+| 10 | — | .000 | .000 | — | .000 | .000 | 1.000 | — | .000 |
+| 20 | .387 | .124 | .125 | .348 | .242 | .333 | .750 | .133 | .087 |
+| 30 | .338 | .389 | .330 | .412 | .636 | .667 | .958 | .169 | .435 |
+| 40 | .311 | .333 | .295 | .457 | .636 | .667 | .958 | .111 | .217 |
+| 50 | .291 | .286 | .341 | .719 | .697 | .792 | .917 | .054 | .087 |
+
+K1G1はstep 10では評価対象境界を選択していない。step 20でprecisionが定義され、step 30でcategory・文節
+coverageが大きく上昇した。その後はfamily P/Cとlandmarkが継続して上がる一方、category Pと文節P/Cは低下
+した。今回の範囲では、文節のpeakがstep 30、familyの形成がより後半という軌跡である。
+
+#### K15-split
+
+| step | category P | category C | category F | family P | family C | landmark C | integrity | 文節 P | 文節 C |
+| ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
+| 10 | .000 | .000 | .023 | — | .000 | .000 | 1.000 | — | .000 |
+| 20 | .317 | .111 | .114 | .000 | .000 | .000 | .833 | .393 | .478 |
+| 30 | .579 | .282 | .114 | .739 | .515 | .667 | .958 | .387 | .522 |
+| 40 | .497 | .346 | .193 | .639 | .697 | .792 | .708 | .383 | .783 |
+| 50 | .400 | .299 | .216 | .864 | .576 | .667 | .958 | .294 | .435 |
+
+K15-splitはstep 20で文節P/Cが`.393/.478`まで形成される一方、同時点のfamily P/Cとlandmarkは0である。
+step 30でfamily境界が形成され、step 40では文節Cが`.783`へ上がるがintegrityが`.708`へ一時低下した。
+step 50ではfamily Pとintegrityが`.864/.958`へ回復し、文節P/CもK1G1の同stepより高い。したがって、
+この5点では「文節が先に形成され、familyが後から形成・調整される」順序が観測される。ただしstep 40--50の
+変動が大きく、収束を示すものではない。
+
+#### K14-middle
+
+| step | category P | category C | category F | family P | family C | landmark C | integrity | 文節 P | 文節 C |
+| ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
+| 10 | .333 | .009 | .000 | .000 | .000 | .000 | .958 | .000 | .000 |
+| 20 | .429 | .218 | .216 | .560 | .424 | .583 | .875 | .387 | .522 |
+| 30 | .435 | .355 | .420 | .581 | .758 | .833 | .667 | .250 | .348 |
+| 40 | .468 | .316 | .216 | .512 | .667 | .875 | .708 | .188 | .261 |
+| 50 | .460 | .295 | .125 | .698 | .909 | .875 | .958 | .097 | .130 |
+
+K14-middleはstep 10から少数のcategory境界を選択し、step 20ではcategory、family、文節の全軸が形成されて
+いる。step 30でcategory Cとfamily Cが上がる一方、category F `.420`とintegrity `.667`へ一時的に悪化した。
+step 40--50ではcategory Pを維持しながらfractureが低下し、step 50でfamily C、landmark、integrityが
+`.909/.875/.958`へ上がった。一方、文節P/Cはstep 20をpeakとして低下しており、K15-splitとは形成・維持の
+順序が異なる。
+
+3構成とも、各指標は単調に形成されない。K1G1は文節の一時的な上昇後にfamilyが伸び、K15-splitは文節が
+先行してfamilyが後から形成され、K14-middleは複数軸を早期に形成した後、fracture・integrityを調整する
+軌跡に見える。この記述は5時点の観測に基づくものであり、未観測stepを含む連続的な形成順序や長期収束を
+断定しない。
 
 ## 4. Category別の特徴
 

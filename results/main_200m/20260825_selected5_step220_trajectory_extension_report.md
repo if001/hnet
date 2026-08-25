@@ -1,6 +1,8 @@
-# selected5 step 220 境界軌跡延長レポート
+# selected7 step 220 境界軌跡延長レポート
 
 作成日: 2026-08-25
+
+追補: K3G1とT26を同条件でstep 220まで延長し、section 9以降に7構成の再集計を追加した。section 1--8は初回5構成の結果を保持しており、候補間順位についてはsection 9以降の7構成版を優先する。
 
 ## 結論
 
@@ -157,3 +159,91 @@ profileを変えてもK15-splitの文節specialist性は12/12で残る。K14-mid
 - profile条件は外部から境界budgetを変える診断で、nativeの代替ではない。
 
 構成別22時点の未丸め値は`results/main_200m/20260825_selected5_step220_per_step_metrics.md`にCSVとして分離した。
+
+## 9. K3G1・T26ベースライン追加実験
+
+### 9.1 追加する理由
+
+T26はmain networkがTransformer 26層だけの基準構成である。K3G1はKDAを多く含む基準構成であり、K14-middle、K14-late、K15-splitなどはKDAの量・位置を変えて、TransformerとKDAの中間を探索する構成である。このため、K1G1だけでなく次の2つを比較基準に加える必要がある。
+
+- T26: KDAを含めないTransformer基準
+- K3G1: KDAを高用量で含む基準
+
+Kimi Delta Attentionは長い系列で計算量を抑えることを狙うため、最終的にはT26との長文・計算量比較が重要である。ただし今回のprobeと学習はsequence length 2048であり、KDAの長文計算量優位や長文精度を直接検証する実験ではない。ここでは、同じraw学習量を与えたときに境界品質がT26からどう変わるかを確認する。
+
+### 9.2 条件と監査
+
+K3G1とT26も初回5構成と同じ`i42/d42/r42`、データ順、LR schedule、`utf8-hard`、full112 probeを用い、step 55 checkpointからoptimizer・data state・RNG stateを復元してstep 220まで延長した。
+
+- K3G1: 2026-08-25 09:45--10:47 UTC、return code 0
+- T26: 2026-08-25 10:47--11:15 UTC、return code 0
+- 各構成: step 55/110/165/220 checkpoint、native 22時点、各112 records
+- milestone profile: step 110/165/220 x 4 conditions、合計6ファイル
+
+学習時間は実装上の速度差を含む参考値であり、選定指標には使わない。特にKDA側のfused実装差や長系列での漸近的な計算量差をこの時間だけから評価しない。
+
+## 10. K3G1とT26の時間軌跡
+
+列順はcategory P/C/F、family P/C、landmark C、integrity、文節P/Cである。
+
+| window | 構成 | category P/C/F | family P/C | landmark | integrity | 文節 P/C |
+| --- | --- | --- | --- | ---: | ---: | --- |
+| initial | K3G1 | .372/.208/.345 | .524/.364 | .425 | .742 | .150/.139 |
+|  | T26 | .397/.172/.225 | .682/.442 | .600 | .842 | .103/.087 |
+| medium | K3G1 | .427/.340/.485 | .595/.742 | .917 | .438 | .157/.217 |
+|  | T26 | .340/.304/.441 | .776/.677 | .903 | .889 | .127/.188 |
+| late | K3G1 | .434/.328/.434 | .447/.465 | .542 | .618 | .126/.174 |
+|  | T26 | .399/.293/.333 | .765/.611 | .743 | .917 | .119/.174 |
+| terminal | K3G1 | .442/.344/.436 | .353/.309 | .283 | .692 | .076/.096 |
+|  | T26 | .396/.274/.302 | .722/.545 | .667 | .908 | .143/.217 |
+
+K3G1はT26よりcategory P/Cが高い。特にterminalではPが`.442`対`.396`、Cが`.344`対`.274`である。一方、category Fは`.436`対`.302`で悪く、family P/C、landmark、integrity、文節P/CもT26を下回った。すなわち、高KDA構成はこの学習範囲でcategory境界を多く説明できる方向へ動くが、語彙fractureとfamily・文節境界の品質を同時に保てていない。
+
+K3G1のmediumではfamily C/landmarkが`.742/.917`まで形成されたが、terminalでは`.309/.283`へ低下した。T26はmedium以降のintegrityを`.889/.917/.908`と高く保ち、family precisionもterminalで`.722`だった。K3G1のterminal transition `.259`は7構成で最小だが、低いfamily/文節品質の分割が安定している可能性があり、小さいtransition自体を改善とは解釈しない。
+
+## 11. 7構成でのterminal再比較
+
+### 11.1 Terminal平均と順位
+
+| 構成 | category P/C/F | family P/C | landmark | integrity | 文節 P/C | 9指標順位平均 |
+| --- | --- | --- | ---: | ---: | --- | ---: |
+| K14-late | .474/.446/.345 | .457/.661 | .867 | .667 | .203/.287 | 3.000 |
+| K1G1 | .425/.464/.425 | .449/.667 | .850 | .833 | .159/.322 | 3.167 |
+| K14-middle | .506/.379/.295 | .540/.442 | .533 | .775 | .183/.252 | 3.444 |
+| K15-split | .409/.332/.375 | .618/.345 | .458 | .833 | .304/.478 | 3.611 |
+| T26 | .396/.274/.302 | .722/.545 | .667 | .908 | .143/.217 | 3.889 |
+| K3-first | .394/.320/.527 | .589/.479 | .658 | .550 | .173/.296 | 5.000 |
+| K3G1 | .442/.344/.436 | .353/.309 | .283 | .692 | .076/.096 | 5.889 |
+
+T26を加えてもK14-lateの順位平均は最良である。ただし既述のとおりintegrity退行があるため、順位だけで採用しない。K3G1はcategory P/CではT26を上回るが、他軸の退行が大きく最下位になった。これはKDAを含めること自体が悪いという意味ではなく、KDAの高用量・配置が今回のboundary objectiveでは偏ったことを示す。
+
+### 11.2 T26との同一step paired比較
+
+表はterminalの`候補 - T26`中央値と改善step数/5である。Fは負が改善、他は正が改善である。
+
+| 構成 | category P | category C | category F | family P | family C | landmark | integrity | 文節 P | 文節 C |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| K3G1 | +.036 (5/5) | +.073 (5/5) | +.136 (0/5) | -.356 (0/5) | -.212 (0/5) | -.375 (0/5) | -.250 (0/5) | -.056 (0/5) | -.087 (0/5) |
+| K15-split | +.014 (4/5) | +.056 (5/5) | +.068 (0/5) | -.151 (1/5) | -.182 (0/5) | -.208 (0/5) | -.083 (0/5) | +.154 (5/5) | +.261 (5/5) |
+| K14-middle | +.109 (5/5) | +.107 (5/5) | .000 (2/5) | -.192 (0/5) | -.121 (0/5) | -.167 (0/5) | -.125 (0/5) | +.045 (4/5) | +.043 (3/5) |
+| K14-late | +.077 (5/5) | +.184 (5/5) | +.034 (0/5) | -.292 (0/5) | +.091 (5/5) | +.208 (5/5) | -.250 (0/5) | +.069 (5/5) | +.087 (4/5) |
+
+K14-middleはK3G1よりKDA量を減らすことで、K3G1で大きかったfractureをT26とほぼ同程度まで改善しつつ、T26よりcategory P/Cを上げている。しかしfamily P/C、landmark、integrityはT26に届かない。K14-lateはT26よりcategory P/C、family C、landmark、文節P/Cを一貫して上げるが、fractureが僅かに増え、integrityが大幅に低下する。したがって、K14-lateはT26からcoverageを得る代わりにintegrityを失う構成、K14-middleはprecision/fractureを重視する構成と整理できる。
+
+K15-splitはT26より文節を明確に改善するが、familyとintegrityを失う。K3G1からKDA量・位置を変えた構成がK3G1の弱点を一部改善していることは確認できるものの、T26が持つfamily integrityを維持する組合せにはまだ到達していない。
+
+## 12. Coverage整合・profile頑健性
+
+K1G1とのcategory coverage差`.03`以内で比較すると、K3G1はcategory P `+.110`、F `+.102`、integrity `-.292`、T26はP `+.078`、F `+.057`、integrity `.000`だった。いずれもprecision上昇だけでなくfracture増加を伴うが、K3G1のtrade-offが大きい。
+
+step 110/165/220 x 4 conditionsの12 profileで、K3G1がT26より改善した数はcategory P/C/F=`10/12/5`、family P/C=`2/1`、landmark=`0`、integrity=`5`、文節P/C=`10/10`だった。K3G1のcategory coverage優位は全profileで残る一方、family/landmark優位はほぼない。nativeだけの偶然ではなく、境界budgetを変えても同じ方向のbiasが観測される。
+
+## 13. 更新した判断
+
+1. T26をK1G1と並ぶ基準として残す。T26はterminalのfamily precisionとintegrityが最も強く、KDA混合による退行を検出する基準になる。
+2. K3G1を高KDA dosage基準として残すが、長時間候補には直接選ばない。category P/Cは高いものの、fracture、family、文節の退行が大きい。
+3. K14-middleはK3G1からの改善として有効である。K3G1のfractureを抑え、T26よりcategory P/Cを上げるが、family/landmarkを回復する余地がある。
+4. K14-lateはcoverage・landmark重視の中間点である。T26より複数coverageを改善する一方、integrityを許容範囲へ戻す必要がある。
+5. 次の探索では「K3G1を何層含めるか」だけでなく、T26の高integrityを壊すKDA位置を特定する。K14-middleとK14-lateの差から、同じKDA量でも位置によりfamily C/landmarkとintegrityのtrade-offが変わるため、KDA dosageとpositionを分離して比較する。
+
+今回の結果だけではKDAの長文精度・計算量上の目的を否定も確認もできない。main-network候補を絞った後、より長いsequence lengthでT26との品質対計算量を測る実験が別途必要である。

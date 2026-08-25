@@ -247,3 +247,100 @@ step 110/165/220 x 4 conditionsの12 profileで、K3G1がT26より改善した�
 5. 次の探索では「K3G1を何層含めるか」だけでなく、T26の高integrityを壊すKDA位置を特定する。K14-middleとK14-lateの差から、同じKDA量でも位置によりfamily C/landmarkとintegrityのtrade-offが変わるため、KDA dosageとpositionを分離して比較する。
 
 今回の結果だけではKDAの長文精度・計算量上の目的を否定も確認もできない。main-network候補を絞った後、より長いsequence lengthでT26との品質対計算量を測る実験が別途必要である。
+
+## 14. TransformerからKDA/Gated MLAへ置換する量・位置の考察
+
+### 14.1 比較している構成
+
+ここでいう「置換」は、T26のmain blockにある26個のTransformer層を、KDA (`K`) とGated MLA (`G`) の26層へ置き換えることを指す。K3G1は26層すべてがKDAという意味ではなく、main blockからTransformerを除き、`K=19/G=7`にした高KDA構成である。
+
+| 構成 | T/K/G | 主な配置 | 比較上の役割 |
+| --- | --- | --- | --- |
+| T26 | 26/0/0 | Transformerのみ | 非置換baseline |
+| K1G1 | 0/13/13 | `K1G1`を均等反復 | 最小KDA量の部分置換baseline |
+| K14-middle | 0/14/12 | K3連続区間を中央に1個 | K14の位置control |
+| K14-late | 0/14/12 | K3連続区間を後方に1個 | K14の位置control |
+| K15-split | 0/15/11 | K3連続区間を前後に分割 | 中間dosage・分割配置 |
+| K3-first | 0/16/10 | K3連続区間を前方に3個 | 高めdosage・前方集中 |
+| K3G1 | 0/19/7 | `K3G1`中心 | main block完全置換・高KDA baseline |
+
+K14-middleとK14-lateはparameter数とK/G総数が同じで、主な差がK3連続区間の位置である。そのため、この2構成間の差はKDA量では説明できず、配置に関連する差として読むことができる。一方、T26からK1G1、K14、K15、K16、K3G1への並びには量と配置が同時に変わる箇所があり、純粋なdosage曲線ではない。
+
+### 14.2 各評価値からわかること
+
+#### Category precision
+
+terminalのcategory PはT26 `.396`、K1G1 `.425`、K14-middle `.506`、K14-late `.474`、K15-split `.409`、K3-first `.394`、K3G1 `.442`だった。Transformerを一部置換すると常に上昇するわけでも、KDA量に比例して上昇するわけでもない。最大は中間量のK14-middleであり、K3G1ではそこから低下する。
+
+したがって、category Pには「KDAが多いほどよい」という単調関係はなく、中央に少量の連続KDA区間を置くK14-middleが、不要な境界を増やさず説明可能境界を選ぶ点でsweet spotになっている。K14-middleとK14-lateの`.032`差から、同じK14でも位置がprecisionを変えることもわかる。
+
+#### Category coverage
+
+category CはT26 `.274`に対し、すべての部分・完全置換構成が`.320`以上だった。K1G1 `.464`、K14-late `.446`が特に高く、K3G1も`.344`でT26を上回る。milestone 12 profileでもK3G1はT26に12/12条件で勝っており、KDA/Gated MLAへの置換は、少なくとも今回のprobeでは説明可能なcategory境界を拾いやすくする方向と関連している。
+
+ただし、coverage最大は高KDAのK3G1ではなくK1G1である。従ってcoverage増加もdosageに比例せず、KDAとGated MLAを交互に置くこと、または連続KDA区間の位置が重要である。
+
+#### Category fracture
+
+FはT26 `.302`、K14-middle `.295`が低く、K14-late `.345`、K15-split `.375`、K1G1 `.425`、K3G1 `.436`、K3-first `.527`の順に悪化した。高KDA量では語彙内部を切るrecordが増える傾向はあるが、K1G1とK15の逆転や、K16がK19より悪いことから単調ではない。
+
+重要なのは、同じK14でもmiddle `.295`とlate `.345`に差がある点である。KDA量を14まで増やすこと自体がfractureを増やすのではなく、中央配置ではT26と同等以上に抑えられる。fractureはdosageよりpositionと連続区間の作り方に敏感な指標と考えられる。
+
+#### Family precision
+
+family PはT26 `.722`が最高で、K15-split `.618`、K3-first `.589`、K14-middle `.540`、K14-late `.457`、K1G1 `.449`、K3G1 `.353`だった。全体として高KDAのK3G1で大きく低下し、T26が最も選択境界をfamily規則で説明しやすい。
+
+部分置換で必ず単調低下するわけではなく、K15/K16はK13/K14-lateより高い。このためfamily PもKDA量だけでは決まらないが、T26のTransformer表現がfamily内の不要境界を抑える強いbaselineになっていることは明確である。
+
+#### Family coverage
+
+family CはK1G1 `.667`とK14-late `.661`がT26 `.545`を上回る一方、K14-middle `.442`、K15-split `.345`、K3G1 `.309`は下回った。同じK14でmiddleとlateに`.219`の差があり、今回の9指標中でも配置依存が特に大きい。
+
+後方K3区間を持つK14-lateはfamily境界を広く拾い、中央K3区間のK14-middleは拾う数を減らしてprecisionとfractureを改善する。これは「後半層がfamilyを担当する」という層役割の証明ではない。main-network配置の違いがencoder/decoderへ返す勾配と表現を変え、最終的なboundary routerの選択biasが変わったという範囲の解釈である。
+
+#### Landmark coverage
+
+landmarkはK14-late `.867`、K1G1 `.850`がT26 `.667`を上回り、K3-first `.658`はT26と同程度、K14-middle `.533`、K15-split `.458`、K3G1 `.283`は下回った。family Cとほぼ同じ配置依存を示し、KDAを多くするだけでは再利用可能なfamily共通境界を形成できない。
+
+K3G1はmedium windowで`.917`まで上がった後、terminalで`.283`まで低下した。高KDA構成はlandmarkを形成できないのではなく、学習後半に維持できなかった。この非単調軌跡は、step 55単点や最終stepだけで配置を選ぶ危険性を示している。
+
+#### Family integrity
+
+integrityはT26 `.908`が最高で、K1G1/K15-split `.833`、K14-middle `.775`、K3G1 `.692`、K14-late `.667`、K3-first `.550`だった。置換量が増えると概ね低下する方向はあるが、K14-lateがK19のK3G1より低く、K15がK14より高いため、量だけの効果ではない。
+
+Transformer-onlyのT26は、保護語彙を壊さないという制約に最も強い。部分置換構成のcoverage改善を採用する場合も、integrityを独立した非相殺制約にする必要がある。K14-lateの高coverageを順位平均で採用できない主因もこの点である。
+
+#### 文節 precision / coverage
+
+文節P/CはK15-split `.304/.478`が突出し、K1G1 `.159/.322`、K3-first `.173/.296`、K14-late `.203/.287`もT26 `.143/.217`の一部または両方を上回った。一方、K3G1は`.076/.096`まで低下した。
+
+従って、文節改善には適量・分割配置のKDAが有効である可能性があるが、完全置換・高KDAまで進めると逆効果になる。K15-splitの前後に分けたK3区間が文節に強いことは、単なるKDA層数ではなく、複数深度へ連続KDA区間を配置することが関係するという仮説を与える。ただし、K15はfamily C/landmarkを失うため文節だけの最適化にはできない。
+
+#### Transition
+
+terminal transitionはT26 `.455`、K1G1 `.409`、K14-late `.375`、K14-middle `.364`、K3-first `.338`、K15-split `.330`、K3G1 `.259`だった。例外はあるものの、KDA量が多いほど隣接step間のboundary signatureが変わりにくくなる傾向がある。
+
+これはKDAが境界を安定化する可能性を示すが、K3G1ではfamily・文節品質が低いままtransitionも低い。従って「良い境界へ収束した」のではなく、「特定の分割biasが動きにくくなった」可能性も同程度にある。transitionは品質指標ではなく、形成・固定の強さを測る診断値として扱う。
+
+### 14.3 全体としての考察
+
+観測結果は、T26とK3G1の間を単純に線形補間するものではない。主に次の3種類の効果が重なっている。
+
+1. 置換の有無: T26からKDA/Gated MLAへ置換するとcategory coverageを上げやすい一方、family integrityを失いやすい。
+2. KDA dosage: 高KDAのK3G1ではcategory P/Cの一部を保つが、family・landmark・文節が弱くなる。中間dosageにPareto上有用な点がある。
+3. KDA position/連続性: 同量のK14-middle/lateでprecision・fracture対family C・landmarkが大きく入れ替わり、K15-splitで文節が突出する。配置効果はdosage効果と同等以上に大きい。
+
+境界学習の観点では、Transformer-onlyのT26は語彙・familyの整合性を保つ方向、KDA/Gated MLA混合は説明可能なcategory境界を広く選ぶ方向にbiasを変えるように見える。連続KDAを中央へ置くと選択を絞ってprecision/fractureを改善し、後方や前後へ置くとfamily landmarkまたは文節coverageを増やす、という配置別の仮説が立つ。
+
+ただし、この説明はboundary結果からの機構仮説であり、各層が特定の言語単位を担当することを直接測定したものではない。また、1 seed、220 step、sequence length 2048であり、architectureごとに同じseed値でもweight tensorの対応は同一ではない。次の構成比較ではK/G総数を固定して位置だけを変える対照を優先し、その後に同一位置でKDA量だけを変えることで、dosageとpositionを分離する必要がある。
+
+現時点の目的に対する有力な役割分担は次の通りである。
+
+- T26: family precision・integrityの上限baseline
+- K1G1: category/family coverageとintegrityの均衡baseline
+- K14-middle: category precision・低fractureの候補
+- K14-late: category/family/landmark coverageの候補
+- K15-split: 文節specialist
+- K3G1: 完全置換・高KDA側の下限/上限を測るcontrol
+
+したがって次の目標はK3G1へさらに近づけることではなく、K14-middleまたはK14-lateを起点に、T26のintegrityとfamily precisionを回復しながら、部分置換で得たcategory coverageまたは文節改善を残すことである。

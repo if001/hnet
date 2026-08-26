@@ -4,11 +4,16 @@ import argparse
 import csv
 import json
 import re
+import sys
 from collections import defaultdict
 from dataclasses import dataclass
 from pathlib import Path
 from statistics import mean, median
 from typing import Any, Iterable
+
+REPOSITORY_ROOT = Path(__file__).resolve().parents[1]
+if str(REPOSITORY_ROOT) not in sys.path:
+    sys.path.insert(0, str(REPOSITORY_ROOT))
 
 from hnet.training.linguistic_boundary_families import (
     FamilyLandmark,

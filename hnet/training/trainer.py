@@ -25,6 +25,11 @@ from .chunking_utils import (
 from ..utils.train import group_params, load_balancing_loss
 from .config import DatasetSource, TrainingConfig
 from .freezing import apply_freeze_mode
+from .family_consistency import (
+    build_family_pair_batch,
+    landmark_consistency_loss,
+    load_family_consistency_pairs,
+)
 from .seeding import (
     capture_rng_state,
     model_state_sha256,
@@ -51,6 +56,7 @@ class TrainingMetricsLogger:
         "ce_loss",
         "ratio_loss",
         "byte_boundary_loss",
+        "family_consistency_loss",
         "total_loss",
         "elapsed_seconds",
         "step_seconds",
@@ -103,6 +109,7 @@ class TrainingMetricsLogger:
         input_bytes: int,
         input_bytes_per_second: float,
         cuda_peak_allocated_mb: float,
+        family_consistency_loss: float = 0.0,
         cumulative_input_bytes: int = 0,
     ) -> None:
         with self.output_path.open("a", encoding="utf-8", newline="") as handle:
@@ -114,6 +121,7 @@ class TrainingMetricsLogger:
                     "ce_loss": ce_loss,
                     "ratio_loss": ratio_loss,
                     "byte_boundary_loss": byte_boundary_loss,
+                    "family_consistency_loss": family_consistency_loss,
                     "total_loss": total_loss,
                     "elapsed_seconds": elapsed_seconds,
                     "step_seconds": step_seconds,
@@ -1028,6 +1036,27 @@ def train(training_config: TrainingConfig) -> None:
         training_config, output_dir / "training_config.json"
     )
     logger.info("saved_training_config=%s", saved_training_config_path)
+    family_pairs = []
+    family_manifest = None
+    if training_config.family_consistency_data is not None:
+        family_pairs, family_manifest = load_family_consistency_pairs(
+            training_config.family_consistency_data,
+            split=training_config.family_consistency_split,
+            seed=training_config.family_consistency_seed,
+        )
+        (output_dir / "family_consistency_manifest.json").write_text(
+            json.dumps(family_manifest, ensure_ascii=False, indent=2) + "\n",
+            encoding="utf-8",
+        )
+        logger.info(
+            "family_consistency_pairs=%d weight=%.6g",
+            len(family_pairs),
+            training_config.family_consistency_weight,
+        )
+    elif training_config.family_consistency_weight != 0.0:
+        raise ValueError(
+            "family_consistency_weight requires family_consistency_data"
+        )
     seed_manifest: dict[str, Any] = {
         "legacy_seed": training_config.seed,
         "model_init_seed": resolved_seeds.model_init_seed,
@@ -1334,6 +1363,7 @@ def train(training_config: TrainingConfig) -> None:
         ce_loss_value = 0.0
         ratio_loss_value = 0.0
         byte_boundary_loss_value = 0.0
+        family_consistency_loss_value = 0.0
         micro_batches_processed = 0
         input_bytes_processed = 0
 
@@ -1431,11 +1461,36 @@ def train(training_config: TrainingConfig) -> None:
                     ).to(dtype=ce_loss.dtype)
                 else:
                     byte_boundary_loss = ce_loss.new_zeros(())
+                if family_pairs:
+                    family_pair = family_pairs[
+                        (data_micro_batches_seen - 1) % len(family_pairs)
+                    ]
+                    family_batch = build_family_pair_batch(
+                        family_pair, device=device
+                    )
+                    family_output = model(
+                        input_ids=family_batch.input_ids,
+                        mask=family_batch.mask,
+                        continuation_mask=family_batch.continuation_mask,
+                        continuation_bias=continuation_bias,
+                        continuation_hard=(
+                            training_config.byte_boundary_constraint == "utf8-hard"
+                        ),
+                        num_last_tokens=1,
+                    )
+                    family_consistency_loss = landmark_consistency_loss(
+                        family_output.bpred_output[0],
+                        family_batch.landmark_positions,
+                    ).to(dtype=ce_loss.dtype)
+                else:
+                    family_consistency_loss = ce_loss.new_zeros(())
                 loss = (
                     ce_loss
                     + training_config.train_ratio_weight * ratio_loss
                     + training_config.byte_boundary_constraint_weight
                     * byte_boundary_loss
+                    + training_config.family_consistency_weight
+                    * family_consistency_loss
                 )
                 loss = loss / training_config.grad_accum_steps
 
@@ -1446,6 +1501,9 @@ def train(training_config: TrainingConfig) -> None:
             ce_loss_value += float(ce_loss.detach())
             ratio_loss_value += float(ratio_loss.detach())
             byte_boundary_loss_value += float(byte_boundary_loss.detach())
+            family_consistency_loss_value += float(
+                family_consistency_loss.detach()
+            )
 
         if micro_batches_processed == 0:
             if training_config.max_steps is None:
@@ -1497,10 +1555,15 @@ def train(training_config: TrainingConfig) -> None:
         average_ce = ce_loss_value / micro_batches_processed
         average_ratio = ratio_loss_value / micro_batches_processed
         average_byte_boundary = byte_boundary_loss_value / micro_batches_processed
+        average_family_consistency = (
+            family_consistency_loss_value / micro_batches_processed
+        )
         total_loss = (
             average_ce
             + training_config.train_ratio_weight * average_ratio
             + training_config.byte_boundary_constraint_weight * average_byte_boundary
+            + training_config.family_consistency_weight
+            * average_family_consistency
         )
         metrics_logger.log(
             step=completed_steps,
@@ -1508,6 +1571,7 @@ def train(training_config: TrainingConfig) -> None:
             ce_loss=average_ce,
             ratio_loss=average_ratio,
             byte_boundary_loss=average_byte_boundary,
+            family_consistency_loss=average_family_consistency,
             total_loss=total_loss,
             elapsed_seconds=elapsed_seconds,
             step_seconds=step_seconds,

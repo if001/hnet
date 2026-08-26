@@ -178,6 +178,21 @@ def resume_boundary_feature(source: Path) -> dict[str, object]:
     }
 
 
+def resume_family_consistency(source: Path) -> dict[str, object]:
+    payload = json.loads(
+        (source / "dense_run_config.json").read_text(encoding="utf-8")
+    )
+    feature = payload.get("family_consistency")
+    if not isinstance(feature, dict):
+        return {"data_sha256": None, "split": "train", "weight": 0.0, "seed": 42}
+    return {
+        "data_sha256": feature.get("data_sha256"),
+        "split": str(feature.get("split", "train")),
+        "weight": float(feature.get("weight", 0.0)),
+        "seed": int(feature.get("seed", 42)),
+    }
+
+
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Run dense family-boundary training.")
     parser.add_argument(
@@ -225,6 +240,10 @@ def parse_args() -> argparse.Namespace:
         type=float,
         default=2.0,
     )
+    parser.add_argument("--family-consistency-data", type=Path)
+    parser.add_argument("--family-consistency-split", default="train")
+    parser.add_argument("--family-consistency-weight", type=float, default=0.0)
+    parser.add_argument("--family-consistency-seed", type=int, default=42)
     parser.add_argument(
         "--work-root", type=Path, default=Path("/content/hnet_agent_200m_main_work")
     )
@@ -296,6 +315,22 @@ def main() -> None:
             raise ValueError(
                 "resume boundary-feature mismatch: "
                 f"source={source_feature} requested={requested_feature}"
+            )
+        requested_family = {
+            "data_sha256": (
+                sha256_file(args.family_consistency_data)
+                if args.family_consistency_data is not None
+                else None
+            ),
+            "split": args.family_consistency_split,
+            "weight": args.family_consistency_weight,
+            "seed": args.family_consistency_seed,
+        }
+        source_family = resume_family_consistency(args.resume_run_dir)
+        if source_family != requested_family:
+            raise ValueError(
+                "resume family-consistency mismatch: "
+                f"source={source_family} requested={requested_family}"
             )
         resume_checkpoint = copy_resume_artifacts(args.resume_run_dir, run_dir)
         resume_source_steps = tuple(
@@ -395,6 +430,19 @@ def main() -> None:
         )
     if args.save_initial_model_to is not None:
         command.extend(["--save-initial-model-to", str(args.save_initial_model_to)])
+    if args.family_consistency_data is not None:
+        command.extend(
+            [
+                "--family-consistency-data",
+                str(args.family_consistency_data),
+                "--family-consistency-split",
+                args.family_consistency_split,
+                "--family-consistency-weight",
+                str(args.family_consistency_weight),
+                "--family-consistency-seed",
+                str(args.family_consistency_seed),
+            ]
+        )
     for prompt in prompts:
         command.append(chunk_prompt_arg(prompt))
     (run_dir / "dense_run_config.json").write_text(
@@ -413,6 +461,21 @@ def main() -> None:
                 "boundary_feature": {
                     "mode": args.boundary_feature_mode,
                     "final_logit_bias": args.boundary_feature_final_logit_bias,
+                },
+                "family_consistency": {
+                    "data": (
+                        str(args.family_consistency_data)
+                        if args.family_consistency_data is not None
+                        else None
+                    ),
+                    "data_sha256": (
+                        sha256_file(args.family_consistency_data)
+                        if args.family_consistency_data is not None
+                        else None
+                    ),
+                    "split": args.family_consistency_split,
+                    "weight": args.family_consistency_weight,
+                    "seed": args.family_consistency_seed,
                 },
                 "base_model_config": str(base_model_config_path),
                 "base_model_config_sha256": sha256_file(base_model_config_path),

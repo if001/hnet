@@ -46,6 +46,10 @@ class TrainingConfig:
     byte_boundary_constraint: str = "off"
     byte_boundary_constraint_weight: float = 0.0
     byte_boundary_constraint_bias: float = 0.0
+    family_consistency_data: str | None = None
+    family_consistency_split: str = "train"
+    family_consistency_weight: float = 0.0
+    family_consistency_seed: int = 42
     compression_ratios: list[float] = field(default_factory=lambda: [4.0])
     lr_multipliers: list[float] = field(default_factory=lambda: [1.0, 1.0])
     seed: int = 42

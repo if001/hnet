@@ -142,6 +142,22 @@ def parse_args() -> TrainingConfig:
         help="Soft bias strength that lowers stage0 boundary probability on UTF-8 continuation bytes.",
     )
     parser.add_argument(
+        "--family-consistency-data",
+        type=str,
+        default=None,
+        help="JSON dataset of paired landmarks used for the C1 auxiliary forward.",
+    )
+    parser.add_argument(
+        "--family-consistency-split", type=str, default="train"
+    )
+    parser.add_argument(
+        "--family-consistency-weight",
+        type=float,
+        default=0.0,
+        help="Weight of C1 landmark-probability MSE. Use zero for a sham control.",
+    )
+    parser.add_argument("--family-consistency-seed", type=int, default=42)
+    parser.add_argument(
         "--compression-ratio",
         action="append",
         dest="compression_ratios",
@@ -331,6 +347,10 @@ def parse_args() -> TrainingConfig:
         byte_boundary_constraint=args.byte_boundary_constraint,
         byte_boundary_constraint_weight=args.byte_boundary_constraint_weight,
         byte_boundary_constraint_bias=args.byte_boundary_constraint_bias,
+        family_consistency_data=args.family_consistency_data,
+        family_consistency_split=args.family_consistency_split,
+        family_consistency_weight=args.family_consistency_weight,
+        family_consistency_seed=args.family_consistency_seed,
         compression_ratios=compression_ratios,
         lr_multipliers=lr_multipliers,
         seed=args.seed,

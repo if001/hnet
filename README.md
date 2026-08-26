@@ -215,6 +215,22 @@ python train.py \
 ## Metrics
 学習ログは `training_metrics.csv` に保存されます。あとから PNG に描画できます。
 
+### Family consistency C1 auxiliary loss
+
+対応する二文のlandmarkでstage 0 boundary probabilityを揃えるpilotは、pair JSONを指定して有効化します。
+
+```bash
+python train.py \
+  --family-consistency-data /path/to/family_pairs.json \
+  --family-consistency-split train \
+  --family-consistency-weight 0.02 \
+  --family-consistency-seed 42
+```
+
+`--family-consistency-weight 0`でもpair forwardは実行されるため、auxiliary forwardの実行順を揃えたsham
+controlとして使用できます。pair順とdataset SHA256は出力先の`family_consistency_manifest.json`へ保存され、
+lossは`training_metrics.csv`の`family_consistency_loss`列へ記録されます。
+
 ```sh
 !python plot_training_log.py \
 --csv-path artifacts/hnet_1stage_100m/training_metrics.csv \

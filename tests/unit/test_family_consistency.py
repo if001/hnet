@@ -25,7 +25,9 @@ def test_family_pair_batch_maps_byte_offset_after_bos() -> None:
 
 
 def test_landmark_consistency_loss_has_gradient() -> None:
-    logits = torch.zeros((2, 8), requires_grad=True)
+    logits = torch.zeros((2, 8))
+    logits[1, 4] = 2.0
+    logits.requires_grad_()
     probability = torch.stack((1 - logits.sigmoid(), logits.sigmoid()), dim=-1)
     output = RoutingModuleOutput(
         boundary_prob=probability,
@@ -33,8 +35,6 @@ def test_landmark_consistency_loss_has_gradient() -> None:
         selected_probs=torch.ones((2, 8, 1)),
         valid_mask=torch.ones((2, 8), dtype=torch.bool),
     )
-    with torch.no_grad():
-        logits[1, 4] = 2.0
     loss = landmark_consistency_loss(output, torch.tensor([3, 4]))
     loss.backward()
     assert loss.item() > 0

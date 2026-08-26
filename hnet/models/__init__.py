@@ -1,5 +1,6 @@
 from .config_hnet import (
     AttnConfig,
+    BoundaryFeatureConfig,
     HNetConfig,
     KDAConfig,
     MLAConfig,

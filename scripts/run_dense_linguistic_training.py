@@ -24,7 +24,7 @@ from scripts.run_boundary_calibration import (
 )
 
 
-CHECKPOINT_STEPS = (55, 110, 165, 220)
+CHECKPOINT_INTERVAL = 55
 DENSE_STEPS = tuple(range(10, 221, 10))
 LR_SCHEDULE_STEPS = 220
 OUTER_COMPRESSION_TARGETS = {
@@ -43,7 +43,10 @@ OUTER_COMPRESSION_TARGETS = {
 
 
 def checkpoint_steps(max_steps: int) -> tuple[int, ...]:
-    return tuple(step for step in CHECKPOINT_STEPS if step <= max_steps)
+    steps = list(range(CHECKPOINT_INTERVAL, max_steps + 1, CHECKPOINT_INTERVAL))
+    if not steps or steps[-1] != max_steps:
+        steps.append(max_steps)
+    return tuple(steps)
 
 
 def dense_steps(max_steps: int) -> tuple[int, ...]:
@@ -60,6 +63,8 @@ def run_name(
     data_order_seed: int | None = None,
     train_runtime_seed: int | None = None,
     run_prefix: str = "r6_dense_family_v1",
+    boundary_feature_mode: str = "final",
+    boundary_feature_final_logit_bias: float = 2.0,
 ) -> str:
     if any(
         value is not None
@@ -71,8 +76,17 @@ def run_name(
         seed_tag = f"i{init_seed}_d{data_seed}_r{runtime_seed}"
     else:
         seed_tag = f"s{seed}"
+    feature_tag = ""
+    if boundary_feature_mode == "layer-scalar-mix":
+        feature_tag = (
+            f"_bfmix_fb{ratio_tag(boundary_feature_final_logit_bias)}"
+        )
+    elif boundary_feature_mode != "final":
+        raise ValueError(
+            f"Unsupported boundary feature mode: {boundary_feature_mode!r}"
+        )
     return (
-        f"{run_prefix}_{main_network}_{seed_tag}_"
+        f"{run_prefix}_{main_network}_{seed_tag}{feature_tag}_"
         f"step{max_steps}_{commit[:7]}"
     )
 
@@ -99,10 +113,13 @@ def chunk_prompt_arg(prompt: str) -> str:
 
 
 def copy_resume_artifacts(source: Path, destination: Path) -> Path:
-    checkpoint = source / "checkpoint_step_000055.pt"
+    checkpoints = sorted(source.glob("checkpoint_step_*.pt"))
+    if not checkpoints:
+        raise FileNotFoundError(f"No checkpoint in dense resume source: {source}")
+    checkpoint = checkpoints[-1]
+    source_step = int(checkpoint.stem.split("_")[-1])
     chunks = source / "validation_chunks"
     required_files = (
-        checkpoint,
         source / "training_metrics.csv",
         source / "validation_metrics.csv",
     )
@@ -112,10 +129,12 @@ def copy_resume_artifacts(source: Path, destination: Path) -> Path:
         int(path.stem.split("_")[-1])
         for path in sorted(chunks.glob("chunks_step_*.json"))
     )
-    if observed != dense_steps(55):
+    if observed != dense_steps(source_step):
         raise RuntimeError(f"Resume source dense steps are incomplete: {observed}")
     destination.mkdir(parents=True)
     for path in required_files:
+        shutil.copy2(path, destination / path.name)
+    for path in checkpoints:
         shutil.copy2(path, destination / path.name)
     shutil.copytree(chunks, destination / "validation_chunks")
     return destination / checkpoint.name
@@ -145,6 +164,20 @@ def resume_seed_factors(source: Path) -> dict[str, int]:
     }
 
 
+def resume_boundary_feature(source: Path) -> dict[str, object]:
+    config_path = source / "dense_run_config.json"
+    if not config_path.is_file():
+        raise FileNotFoundError(config_path)
+    payload = json.loads(config_path.read_text(encoding="utf-8"))
+    feature = payload.get("boundary_feature")
+    if not isinstance(feature, dict):
+        return {"mode": "final", "final_logit_bias": 2.0}
+    return {
+        "mode": str(feature.get("mode", "final")),
+        "final_logit_bias": float(feature.get("final_logit_bias", 2.0)),
+    }
+
+
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Run dense family-boundary training.")
     parser.add_argument(
@@ -164,7 +197,7 @@ def parse_args() -> argparse.Namespace:
         type=Path,
         help="Optional path for the exact pre-training model state.",
     )
-    parser.add_argument("--max-steps", type=int, choices=[55, 220], default=220)
+    parser.add_argument("--max-steps", type=int, choices=[55, 100, 220], default=220)
     parser.add_argument(
         "--resume-run-dir",
         type=Path,
@@ -181,6 +214,16 @@ def parse_args() -> argparse.Namespace:
         "--run-prefix",
         default="r6_dense_family_v1",
         help="Artifact name prefix; use a distinct value for a new probe protocol.",
+    )
+    parser.add_argument(
+        "--boundary-feature-mode",
+        choices=["final", "layer-scalar-mix"],
+        default="final",
+    )
+    parser.add_argument(
+        "--boundary-feature-final-logit-bias",
+        type=float,
+        default=2.0,
     )
     parser.add_argument(
         "--work-root", type=Path, default=Path("/content/hnet_agent_200m_main_work")
@@ -227,6 +270,10 @@ def main() -> None:
         data_order_seed=resolved_seeds["data_order_seed"],
         train_runtime_seed=resolved_seeds["train_runtime_seed"],
         run_prefix=args.run_prefix,
+        boundary_feature_mode=args.boundary_feature_mode,
+        boundary_feature_final_logit_bias=(
+            args.boundary_feature_final_logit_bias
+        ),
     )
     run_dir = args.work_root / "runs" / name
     archive_dir = args.archive_root / name
@@ -240,20 +287,51 @@ def main() -> None:
             raise ValueError(
                 f"resume seed mismatch: source={source_seeds} requested={resolved_seeds}"
             )
+        requested_feature = {
+            "mode": args.boundary_feature_mode,
+            "final_logit_bias": args.boundary_feature_final_logit_bias,
+        }
+        source_feature = resume_boundary_feature(args.resume_run_dir)
+        if source_feature != requested_feature:
+            raise ValueError(
+                "resume boundary-feature mismatch: "
+                f"source={source_feature} requested={requested_feature}"
+            )
         resume_checkpoint = copy_resume_artifacts(args.resume_run_dir, run_dir)
+        resume_source_steps = tuple(
+            int(path.stem.split("_")[-1])
+            for path in sorted(args.resume_run_dir.glob("checkpoint_step_*.pt"))
+        )
     else:
         run_dir.mkdir(parents=True)
         resume_checkpoint = None
+        resume_source_steps = ()
     if args.initial_model_checkpoint is not None and resume_checkpoint is not None:
         raise ValueError(
             "--initial-model-checkpoint cannot be combined with --resume-run-dir"
+        )
+
+    base_model_config_path = Path(MODEL_CONFIGS[args.main])
+    model_config_path = base_model_config_path
+    if args.boundary_feature_mode == "layer-scalar-mix":
+        model_config_payload = json.loads(
+            base_model_config_path.read_text(encoding="utf-8")
+        )
+        model_config_payload["boundary_feature_cfg"] = {
+            "mode": "layer_scalar_mix",
+            "final_logit_bias": args.boundary_feature_final_logit_bias,
+        }
+        model_config_path = run_dir / "input_model_config.json"
+        model_config_path.write_text(
+            json.dumps(model_config_payload, ensure_ascii=False, indent=4) + "\n",
+            encoding="utf-8",
         )
 
     command = [
         sys.executable,
         "train.py",
         "--model-config-path",
-        MODEL_CONFIGS[args.main],
+        str(model_config_path),
         "--output-dir",
         str(run_dir),
         "--packed-data-dir",
@@ -332,7 +410,13 @@ def main() -> None:
                 "probe_unique_prompt_count": len(prompts),
                 "probe_sha256": sha256_file(args.probe),
                 "run_prefix": args.run_prefix,
-                "model_config_sha256": sha256_file(Path(MODEL_CONFIGS[args.main])),
+                "boundary_feature": {
+                    "mode": args.boundary_feature_mode,
+                    "final_logit_bias": args.boundary_feature_final_logit_bias,
+                },
+                "base_model_config": str(base_model_config_path),
+                "base_model_config_sha256": sha256_file(base_model_config_path),
+                "model_config_sha256": sha256_file(model_config_path),
                 "packed_data_manifest_sha256": sha256_file(
                     args.packed_data_dir / "mix_manifest.json"
                 ),
@@ -363,8 +447,11 @@ def main() -> None:
     run_and_log(command, run_dir / "training_console.log")
 
     checkpoints = sorted(run_dir.glob("checkpoint_step_*.pt"))
+    expected_checkpoint_steps = tuple(
+        sorted(set(checkpoint_steps(args.max_steps)) | set(resume_source_steps))
+    )
     if [path.name for path in checkpoints] != [
-        f"checkpoint_step_{step:06d}.pt" for step in checkpoint_steps(args.max_steps)
+        f"checkpoint_step_{step:06d}.pt" for step in expected_checkpoint_steps
     ]:
         raise RuntimeError("dense run checkpoint set is incomplete")
     chunk_reports = sorted((run_dir / "validation_chunks").glob("chunks_step_*.json"))

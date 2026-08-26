@@ -9,6 +9,7 @@ from scripts.run_dense_linguistic_training import (
     copy_resume_artifacts,
     dense_steps,
     load_probe_prompts,
+    resume_boundary_feature,
     resume_seed_factors,
     run_name,
 )
@@ -31,6 +32,9 @@ def test_dense_steps_are_ten_step_intervals() -> None:
     assert LR_SCHEDULE_STEPS == 220
     assert dense_steps(55) == (10, 20, 30, 40, 50)
     assert checkpoint_steps(55) == (55,)
+    assert dense_steps(100) == tuple(range(10, 101, 10))
+    assert checkpoint_steps(100) == (55, 100)
+    assert checkpoint_steps(220) == (55, 110, 165, 220)
 
 
 def test_dense_targets_include_combined_pareto_candidates() -> None:
@@ -53,6 +57,21 @@ def test_dense_run_name_supports_screening_length() -> None:
     assert run_name("k1first_mix", 42, "abcdef0123", 55) == (
         "r6_dense_family_v1_k1first_mix_s42_step55_abcdef0"
     )
+
+
+def test_dense_run_name_records_boundary_feature_variant() -> None:
+    assert run_name(
+        "t26",
+        42,
+        "abcdef0123",
+        100,
+        model_init_seed=42,
+        data_order_seed=42,
+        train_runtime_seed=42,
+        run_prefix="r9_boundary_fusion_v1",
+        boundary_feature_mode="layer-scalar-mix",
+        boundary_feature_final_logit_bias=2.0,
+    ) == "r9_boundary_fusion_v1_t26_i42_d42_r42_bfmix_fb2_step100_abcdef0"
 
 
 def test_dense_run_name_records_factorized_seeds() -> None:
@@ -134,4 +153,24 @@ def test_resume_seed_factors_support_legacy_and_split_metadata(tmp_path) -> None
         "model_init_seed": 43,
         "data_order_seed": 44,
         "train_runtime_seed": 45,
+    }
+
+
+def test_resume_boundary_feature_supports_legacy_and_explicit_metadata(tmp_path) -> None:
+    source = tmp_path / "source"
+    source.mkdir()
+    config = source / "dense_run_config.json"
+    config.write_text('{"seed": 42}', encoding="utf-8")
+    assert resume_boundary_feature(source) == {
+        "mode": "final",
+        "final_logit_bias": 2.0,
+    }
+    config.write_text(
+        '{"boundary_feature": {'
+        '"mode": "layer-scalar-mix", "final_logit_bias": 1.5}}',
+        encoding="utf-8",
+    )
+    assert resume_boundary_feature(source) == {
+        "mode": "layer-scalar-mix",
+        "final_logit_bias": 1.5,
     }

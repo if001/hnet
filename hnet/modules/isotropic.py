@@ -141,6 +141,7 @@ class Isotropic(nn.Module):
         max_seqlen=None,
         mask=None,
         inference_params=None,
+        return_layer_states: bool = False,
         **mixer_kwargs,
     ):
         assert (mask is not None) or (
@@ -166,7 +167,9 @@ class Isotropic(nn.Module):
             packed = True
 
         residual = None
-        for layer, arch in zip(self.layers, self.arch_full):
+        layer_states = []
+        last_layer_idx = len(self.layers) - 1
+        for layer_idx, (layer, arch) in enumerate(zip(self.layers, self.arch_full)):
             if arch in ("m", "M"):
                 layer_mixer_kwargs = ssm_mixer_kwargs
                 if hidden_states.dim() == 2:
@@ -196,6 +199,17 @@ class Isotropic(nn.Module):
                 mixer_kwargs=layer_mixer_kwargs,
             )
 
+            if return_layer_states and layer_idx < last_layer_idx:
+                layer_state = self.rmsnorm(
+                    hidden_states,
+                    residual=residual,
+                    prenorm=False,
+                    residual_in_fp32=True,
+                )
+                if layer_state.dim() == 3 and packed:
+                    layer_state = layer_state.squeeze(0)
+                layer_states.append(layer_state)
+
         # Setting prenorm=False ignores the residual
         hidden_states = self.rmsnorm(
             hidden_states, residual=residual, prenorm=False, residual_in_fp32=True
@@ -204,26 +218,50 @@ class Isotropic(nn.Module):
         if hidden_states.dim() == 3 and packed:
             hidden_states = hidden_states.squeeze(0)
 
+        if return_layer_states:
+            layer_states.append(hidden_states)
+
         if inference_params is not None:
             # here we also explicitly assume the mask is all True
             assert mask.shape[0] == 1, "seqlen_offset handling assumes batch size 1"
             inference_params.seqlen_offset += hidden_states.shape[1]
 
+        if return_layer_states:
+            return hidden_states, layer_states
         return hidden_states
 
-    def step(self, hidden_states, inference_params):
+    def step(
+        self,
+        hidden_states,
+        inference_params,
+        return_layer_states: bool = False,
+    ):
         """
         Assumes hidden_states is (B, 1, D). Steps each of the layers in order, and then steps the main model.
         """
         residual = None
-        for layer in self.layers:
+        layer_states = []
+        last_layer_idx = len(self.layers) - 1
+        for layer_idx, layer in enumerate(self.layers):
             hidden_states, residual = layer.step(
                 hidden_states, inference_params, residual=residual
             )
+            if return_layer_states and layer_idx < last_layer_idx:
+                layer_states.append(
+                    self.rmsnorm(
+                        hidden_states,
+                        residual=residual,
+                        prenorm=False,
+                        residual_in_fp32=True,
+                    )
+                )
 
         hidden_states = self.rmsnorm(
             hidden_states, residual=residual, prenorm=False, residual_in_fp32=True
         )
         inference_params.seqlen_offset += 1
 
+        if return_layer_states:
+            layer_states.append(hidden_states)
+            return hidden_states, layer_states
         return hidden_states

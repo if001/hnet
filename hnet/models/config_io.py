@@ -2,7 +2,14 @@ import json
 from dataclasses import asdict
 from pathlib import Path
 
-from .config_hnet import AttnConfig, HNetConfig, KDAConfig, MLAConfig, SSMConfig
+from .config_hnet import (
+    AttnConfig,
+    BoundaryFeatureConfig,
+    HNetConfig,
+    KDAConfig,
+    MLAConfig,
+    SSMConfig,
+)
 
 
 def load_hnet_config(config_path: str | Path) -> HNetConfig:
@@ -13,12 +20,16 @@ def load_hnet_config(config_path: str | Path) -> HNetConfig:
     ssm_cfg = SSMConfig(**config.pop("ssm_cfg"))
     kda_cfg = KDAConfig(**config.pop("kda_cfg", {}))
     mla_cfg = MLAConfig(**config.pop("mla_cfg", {}))
+    boundary_feature_cfg = BoundaryFeatureConfig(
+        **config.pop("boundary_feature_cfg", {})
+    )
     return HNetConfig(
         **config,
         attn_cfg=attn_cfg,
         ssm_cfg=ssm_cfg,
         kda_cfg=kda_cfg,
         mla_cfg=mla_cfg,
+        boundary_feature_cfg=boundary_feature_cfg,
     )
 
 

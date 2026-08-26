@@ -43,6 +43,14 @@ class MLAConfig:
 
 
 @dataclass
+class BoundaryFeatureConfig:
+    """Controls which encoder representations are sent to boundary routing."""
+
+    mode: str = "final"
+    final_logit_bias: float = 2.0
+
+
+@dataclass
 class HNetConfig:
     arch_layout: List[Union[str, List]] = field(default_factory=list)
     d_model: List[int] = field(default_factory=list)
@@ -53,6 +61,9 @@ class HNetConfig:
     attn_cfg: AttnConfig = field(default_factory=AttnConfig)
     kda_cfg: KDAConfig = field(default_factory=KDAConfig)
     mla_cfg: MLAConfig = field(default_factory=MLAConfig)
+    boundary_feature_cfg: BoundaryFeatureConfig = field(
+        default_factory=BoundaryFeatureConfig
+    )
     tie_embeddings: bool = False
 
     def to_dict(self):

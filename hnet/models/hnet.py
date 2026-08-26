@@ -5,6 +5,7 @@ import torch
 import torch.nn as nn
 
 from hnet.modules.isotropic import Isotropic, IsotropicInferenceParams
+from hnet.modules.boundary_features import LayerScalarMix
 from hnet.modules.dc import (
     BoundaryOverride,
     RoutingModule,
@@ -97,6 +98,20 @@ class HNet(nn.Module):
             self.add_module(_name, _sub_model)
 
         if not self.is_innermost:
+            boundary_feature_mode = config.boundary_feature_cfg.mode
+            if boundary_feature_mode not in ("final", "layer_scalar_mix"):
+                raise ValueError(
+                    f"Unsupported boundary feature mode: {boundary_feature_mode!r}"
+                )
+            self.boundary_feature_mode = boundary_feature_mode
+            if boundary_feature_mode == "layer_scalar_mix":
+                self.boundary_feature_mixer = LayerScalarMix(
+                    len(self.encoder.layers),
+                    final_logit_bias=config.boundary_feature_cfg.final_logit_bias,
+                    device=device,
+                )
+            else:
+                self.boundary_feature_mixer = None
             self.routing_module = RoutingModule(self.d_model, **factory_kwargs)
             self.chunk_layer = ChunkLayer()
             self.dechunk_layer = DeChunkLayer(self.d_model)
@@ -247,14 +262,29 @@ class HNet(nn.Module):
             hidden_states = hidden_states[..., :D]
             return hidden_states, []
 
-        hidden_states = self.encoder(
-            hidden_states,
-            cu_seqlens=cu_seqlens,
-            max_seqlen=max_seqlen,
-            mask=mask,
-            inference_params=inference_params.encoder_state,
-            **mixer_kwargs,
-        )
+        if self.boundary_feature_mixer is None:
+            hidden_states = self.encoder(
+                hidden_states,
+                cu_seqlens=cu_seqlens,
+                max_seqlen=max_seqlen,
+                mask=mask,
+                inference_params=inference_params.encoder_state,
+                **mixer_kwargs,
+            )
+            routing_hidden_states = hidden_states
+        else:
+            hidden_states, encoder_layer_states = self.encoder(
+                hidden_states,
+                cu_seqlens=cu_seqlens,
+                max_seqlen=max_seqlen,
+                mask=mask,
+                inference_params=inference_params.encoder_state,
+                return_layer_states=True,
+                **mixer_kwargs,
+            )
+            routing_hidden_states = self.boundary_feature_mixer(
+                encoder_layer_states
+            )
 
         hidden_states_for_residual = hidden_states.to(
             dtype=self.residual_proj.weight.dtype
@@ -262,7 +292,7 @@ class HNet(nn.Module):
         residual = self.residual_proj(hidden_states_for_residual)
 
         bpred_output = self.routing_module(
-            hidden_states,
+            routing_hidden_states,
             cu_seqlens=cu_seqlens,
             mask=mask,
             inference_params=inference_params.routing_module_state,
@@ -348,14 +378,27 @@ class HNet(nn.Module):
             hidden_states = hidden_states[..., :D]
             return hidden_states, []
 
-        hidden_states = self.encoder.step(hidden_states, inference_params.encoder_state)
+        if self.boundary_feature_mixer is None:
+            hidden_states = self.encoder.step(
+                hidden_states, inference_params.encoder_state
+            )
+            routing_hidden_states = hidden_states
+        else:
+            hidden_states, encoder_layer_states = self.encoder.step(
+                hidden_states,
+                inference_params.encoder_state,
+                return_layer_states=True,
+            )
+            routing_hidden_states = self.boundary_feature_mixer(
+                encoder_layer_states
+            )
         hidden_states_for_residual = hidden_states.to(
             dtype=self.residual_proj.weight.dtype
         )
         residual = self.residual_proj(hidden_states_for_residual)
 
         bpred_output = self.routing_module.step(
-            hidden_states,
+            routing_hidden_states,
             inference_params.routing_module_state,
             continuation_mask=continuation_mask if self.stage_idx == 0 else None,
             continuation_hard=continuation_hard if self.stage_idx == 0 else False,

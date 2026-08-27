@@ -216,7 +216,10 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--resume-run-dir",
         type=Path,
-        help="Completed 55-step dense run whose optimizer/data state is resumed.",
+        help=(
+            "Completed 55-step dense run whose optimizer/data state is resumed "
+            "to step 100 or 220."
+        ),
     )
     parser.add_argument("--packed-data-dir", type=Path, required=True)
     parser.add_argument("--packed-validation-data-dir", type=Path, required=True)
@@ -299,8 +302,10 @@ def main() -> None:
     if run_dir.exists() or archive_dir.exists():
         raise FileExistsError(f"Refusing to overwrite existing run: {name}")
     if args.resume_run_dir is not None:
-        if args.max_steps != 220:
-            raise ValueError("--resume-run-dir requires --max-steps 220")
+        if args.max_steps not in {100, 220}:
+            raise ValueError(
+                "--resume-run-dir requires --max-steps 100 or 220"
+            )
         source_seeds = resume_seed_factors(args.resume_run_dir)
         if source_seeds != resolved_seeds:
             raise ValueError(

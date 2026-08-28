@@ -215,7 +215,7 @@ python train.py \
 ## Metrics
 学習ログは `training_metrics.csv` に保存されます。あとから PNG に描画できます。
 
-### Family consistency C1 auxiliary loss
+### Family boundary auxiliary losses (C1/C2)
 
 対応する二文のlandmarkでstage 0 boundary probabilityを揃えるpilotは、pair JSONを指定して有効化します。
 
@@ -223,8 +223,20 @@ python train.py \
 python train.py \
   --family-consistency-data /path/to/family_pairs.json \
   --family-consistency-split train \
+  --family-consistency-objective c1 \
   --family-consistency-weight 0.02 \
   --family-consistency-seed 42
+```
+
+`--family-consistency-objective c2`では、各sideの`protected_span`内部よりlandmarkの境界確率を高くする
+integrity marginを使用します。必要な差は`--family-consistency-margin`で指定します。
+
+```bash
+python train.py \
+  --family-consistency-data /path/to/integrity_pairs.json \
+  --family-consistency-objective c2 \
+  --family-consistency-margin 0.15 \
+  --family-consistency-weight 0.25
 ```
 
 `--family-consistency-weight 0`でもpair forwardは実行されるため、auxiliary forwardの実行順を揃えたsham

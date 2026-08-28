@@ -151,10 +151,22 @@ def parse_args() -> TrainingConfig:
         "--family-consistency-split", type=str, default="train"
     )
     parser.add_argument(
+        "--family-consistency-objective",
+        choices=("c1", "c2"),
+        default="c1",
+        help="C1 probability matching or C2 protected-span integrity margin.",
+    )
+    parser.add_argument(
         "--family-consistency-weight",
         type=float,
         default=0.0,
-        help="Weight of C1 landmark-probability MSE. Use zero for a sham control.",
+        help="Weight of the selected family auxiliary loss. Use zero for a sham control.",
+    )
+    parser.add_argument(
+        "--family-consistency-margin",
+        type=float,
+        default=0.15,
+        help="Required landmark-minus-internal probability margin for C2.",
     )
     parser.add_argument("--family-consistency-seed", type=int, default=42)
     parser.add_argument(
@@ -349,7 +361,9 @@ def parse_args() -> TrainingConfig:
         byte_boundary_constraint_bias=args.byte_boundary_constraint_bias,
         family_consistency_data=args.family_consistency_data,
         family_consistency_split=args.family_consistency_split,
+        family_consistency_objective=args.family_consistency_objective,
         family_consistency_weight=args.family_consistency_weight,
+        family_consistency_margin=args.family_consistency_margin,
         family_consistency_seed=args.family_consistency_seed,
         compression_ratios=compression_ratios,
         lr_multipliers=lr_multipliers,

@@ -184,11 +184,20 @@ def resume_family_consistency(source: Path) -> dict[str, object]:
     )
     feature = payload.get("family_consistency")
     if not isinstance(feature, dict):
-        return {"data_sha256": None, "split": "train", "weight": 0.0, "seed": 42}
+        return {
+            "data_sha256": None,
+            "split": "train",
+            "objective": "c1",
+            "weight": 0.0,
+            "margin": 0.15,
+            "seed": 42,
+        }
     return {
         "data_sha256": feature.get("data_sha256"),
         "split": str(feature.get("split", "train")),
+        "objective": str(feature.get("objective", "c1")),
         "weight": float(feature.get("weight", 0.0)),
+        "margin": float(feature.get("margin", 0.15)),
         "seed": int(feature.get("seed", 42)),
     }
 
@@ -245,7 +254,11 @@ def parse_args() -> argparse.Namespace:
     )
     parser.add_argument("--family-consistency-data", type=Path)
     parser.add_argument("--family-consistency-split", default="train")
+    parser.add_argument(
+        "--family-consistency-objective", choices=("c1", "c2"), default="c1"
+    )
     parser.add_argument("--family-consistency-weight", type=float, default=0.0)
+    parser.add_argument("--family-consistency-margin", type=float, default=0.15)
     parser.add_argument("--family-consistency-seed", type=int, default=42)
     parser.add_argument(
         "--work-root", type=Path, default=Path("/content/hnet_agent_200m_main_work")
@@ -328,7 +341,9 @@ def main() -> None:
                 else None
             ),
             "split": args.family_consistency_split,
+            "objective": args.family_consistency_objective,
             "weight": args.family_consistency_weight,
+            "margin": args.family_consistency_margin,
             "seed": args.family_consistency_seed,
         }
         source_family = resume_family_consistency(args.resume_run_dir)
@@ -442,8 +457,12 @@ def main() -> None:
                 str(args.family_consistency_data),
                 "--family-consistency-split",
                 args.family_consistency_split,
+                "--family-consistency-objective",
+                args.family_consistency_objective,
                 "--family-consistency-weight",
                 str(args.family_consistency_weight),
+                "--family-consistency-margin",
+                str(args.family_consistency_margin),
                 "--family-consistency-seed",
                 str(args.family_consistency_seed),
             ]
@@ -479,7 +498,9 @@ def main() -> None:
                         else None
                     ),
                     "split": args.family_consistency_split,
+                    "objective": args.family_consistency_objective,
                     "weight": args.family_consistency_weight,
+                    "margin": args.family_consistency_margin,
                     "seed": args.family_consistency_seed,
                 },
                 "base_model_config": str(base_model_config_path),

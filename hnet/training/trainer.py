@@ -27,6 +27,7 @@ from .config import DatasetSource, TrainingConfig
 from .freezing import apply_freeze_mode
 from .family_consistency import (
     build_family_pair_batch,
+    integrity_margin_loss,
     landmark_consistency_loss,
     load_family_consistency_pairs,
 )
@@ -1038,20 +1039,29 @@ def train(training_config: TrainingConfig) -> None:
     logger.info("saved_training_config=%s", saved_training_config_path)
     family_pairs = []
     family_manifest = None
+    if training_config.family_consistency_objective not in {"c1", "c2"}:
+        raise ValueError("family_consistency_objective must be c1 or c2")
     if training_config.family_consistency_data is not None:
         family_pairs, family_manifest = load_family_consistency_pairs(
             training_config.family_consistency_data,
             split=training_config.family_consistency_split,
             seed=training_config.family_consistency_seed,
+            require_protected_span=(
+                training_config.family_consistency_objective == "c2"
+            ),
         )
+        family_manifest["objective"] = training_config.family_consistency_objective
+        family_manifest["margin"] = training_config.family_consistency_margin
         (output_dir / "family_consistency_manifest.json").write_text(
             json.dumps(family_manifest, ensure_ascii=False, indent=2) + "\n",
             encoding="utf-8",
         )
         logger.info(
-            "family_consistency_pairs=%d weight=%.6g",
+            "family_consistency_pairs=%d objective=%s weight=%.6g margin=%.6g",
             len(family_pairs),
+            training_config.family_consistency_objective,
             training_config.family_consistency_weight,
+            training_config.family_consistency_margin,
         )
     elif training_config.family_consistency_weight != 0.0:
         raise ValueError(
@@ -1478,10 +1488,21 @@ def train(training_config: TrainingConfig) -> None:
                         ),
                         num_last_tokens=1,
                     )
-                    family_consistency_loss = landmark_consistency_loss(
-                        family_output.bpred_output[0],
-                        family_batch.landmark_positions,
-                    ).to(dtype=ce_loss.dtype)
+                    if training_config.family_consistency_objective == "c1":
+                        family_consistency_loss = landmark_consistency_loss(
+                            family_output.bpred_output[0],
+                            family_batch.landmark_positions,
+                        )
+                    else:
+                        family_consistency_loss = integrity_margin_loss(
+                            family_output.bpred_output[0],
+                            family_batch.landmark_positions,
+                            family_batch.protected_position_mask,
+                            margin=training_config.family_consistency_margin,
+                        )
+                    family_consistency_loss = family_consistency_loss.to(
+                        dtype=ce_loss.dtype
+                    )
                 else:
                     family_consistency_loss = ce_loss.new_zeros(())
                 loss = (

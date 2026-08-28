@@ -239,11 +239,12 @@ def parse_args() -> TrainingConfig:
     )
     parser.add_argument(
         "--freeze-mode",
-        choices=["none", "router", "main"],
+        choices=["none", "router", "main", "outer"],
         default="none",
         help=(
-            "Freeze routing modules (router), freeze all non-router parameters "
-            "(main), or update the full model (none)."
+            "Freeze routing modules (router), update only routers (main), "
+            "update only outer-stage encoder/decoder/routing/dechunk modules "
+            "(outer), or update the full model (none)."
         ),
     )
     parser.add_argument(

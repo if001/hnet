@@ -221,7 +221,14 @@ def parse_args() -> argparse.Namespace:
         type=Path,
         help="Optional path for the exact pre-training model state.",
     )
-    parser.add_argument("--max-steps", type=int, choices=[55, 100, 220], default=220)
+    parser.add_argument(
+        "--max-steps", type=int, choices=[20, 55, 100, 200, 220], default=220
+    )
+    parser.add_argument(
+        "--freeze-mode",
+        choices=("none", "router", "main", "outer"),
+        default="none",
+    )
     parser.add_argument(
         "--resume-run-dir",
         type=Path,
@@ -441,6 +448,8 @@ def main() -> None:
         str(resolved_seeds["train_runtime_seed"]),
         "--num-workers",
         "0",
+        "--freeze-mode",
+        args.freeze_mode,
     ]
     if resume_checkpoint is not None:
         command.extend(["--resume-from-checkpoint", str(resume_checkpoint)])
@@ -482,6 +491,7 @@ def main() -> None:
                 "probe_unique_prompt_count": len(prompts),
                 "probe_sha256": sha256_file(args.probe),
                 "run_prefix": args.run_prefix,
+                "freeze_mode": args.freeze_mode,
                 "boundary_feature": {
                     "mode": args.boundary_feature_mode,
                     "final_logit_bias": args.boundary_feature_final_logit_bias,

@@ -1,4 +1,3 @@
-from collections import namedtuple
 from dataclasses import dataclass
 
 import torch
@@ -10,6 +9,7 @@ from .hnet import HNet, HNetState
 from .config_hnet import HNetConfig
 
 from hnet.modules.dc import BoundaryOverride, RoutingModuleOutput
+from hnet.modules.mlp import Top1SwiGLUMoE
 from hnet.modules.utils import apply_optimization_params
 
 @dataclass
@@ -17,6 +17,8 @@ class CausalLMOutput:
     logits: torch.Tensor
     bpred_output: list[RoutingModuleOutput]
     inference_params: HNetState
+    moe_aux_loss: torch.Tensor | None = None
+    moe_metrics: dict[str, torch.Tensor] | None = None
 
 
 class HNetForCausalLM(nn.Module, GenerationMixin):
@@ -80,6 +82,37 @@ class HNetForCausalLM(nn.Module, GenerationMixin):
             batch_size, max_seqlen, dtype=dtype, **kwargs
         )
 
+    def collect_moe_outputs(
+        self,
+    ) -> tuple[torch.Tensor | None, dict[str, torch.Tensor] | None]:
+        modules = [
+            module
+            for module in self.modules()
+            if isinstance(module, Top1SwiGLUMoE)
+            and module.last_aux_loss is not None
+        ]
+        if not modules:
+            return None, None
+        aux_loss = torch.stack([module.last_aux_loss for module in modules]).mean()
+        assignment = torch.stack(
+            [module.last_assignment_fraction for module in modules]
+        )
+        accepted = torch.stack(
+            [module.last_accepted_fraction for module in modules]
+        )
+        metrics = {
+            "max_expert_fraction": assignment.max(),
+            "mean_max_expert_fraction": assignment.max(dim=-1).values.mean(),
+            "dropped_fraction": torch.stack(
+                [module.last_dropped_fraction for module in modules]
+            ).mean(),
+            "routing_entropy": torch.stack(
+                [module.last_routing_entropy for module in modules]
+            ).mean(),
+            "accepted_fraction": accepted.sum(dim=-1).mean(),
+        }
+        return aux_loss, metrics
+
     def forward(
         self,
         input_ids,
@@ -135,13 +168,13 @@ class HNetForCausalLM(nn.Module, GenerationMixin):
             hidden_states = hidden_states[:, -num_last_tokens:]
         lm_logits = self.lm_head(hidden_states)
 
-        CausalLMOutput = namedtuple(
-            "CausalLMOutput", ["logits", "bpred_output", "inference_params"]
-        )
+        moe_aux_loss, moe_metrics = self.collect_moe_outputs()
         return CausalLMOutput(
             logits=lm_logits,
             bpred_output=bpred_output,
             inference_params=inference_params,
+            moe_aux_loss=moe_aux_loss,
+            moe_metrics=moe_metrics,
         )
 
     def step(self, input_ids, inference_params, continuation_hard: bool = False):
@@ -161,6 +194,11 @@ class HNetForCausalLM(nn.Module, GenerationMixin):
         )
         logits = self.lm_head(hidden_states)
 
+        moe_aux_loss, moe_metrics = self.collect_moe_outputs()
         return CausalLMOutput(
-            logits=logits, bpred_output=bpred_output, inference_params=inference_params
+            logits=logits,
+            bpred_output=bpred_output,
+            inference_params=inference_params,
+            moe_aux_loss=moe_aux_loss,
+            moe_metrics=moe_metrics,
         )

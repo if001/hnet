@@ -170,6 +170,12 @@ def parse_args() -> TrainingConfig:
     )
     parser.add_argument("--family-consistency-seed", type=int, default=42)
     parser.add_argument(
+        "--moe-aux-loss-weight",
+        type=float,
+        default=0.0,
+        help="Load-balancing auxiliary loss weight for FFN-MoE models.",
+    )
+    parser.add_argument(
         "--compression-ratio",
         action="append",
         dest="compression_ratios",
@@ -366,6 +372,7 @@ def parse_args() -> TrainingConfig:
         family_consistency_weight=args.family_consistency_weight,
         family_consistency_margin=args.family_consistency_margin,
         family_consistency_seed=args.family_consistency_seed,
+        moe_aux_loss_weight=args.moe_aux_loss_weight,
         compression_ratios=compression_ratios,
         lr_multipliers=lr_multipliers,
         seed=args.seed,

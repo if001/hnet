@@ -5,6 +5,7 @@ from pathlib import Path
 from .config_hnet import (
     AttnConfig,
     BoundaryFeatureConfig,
+    FFNMoEConfig,
     HNetConfig,
     KDAConfig,
     MLAConfig,
@@ -23,6 +24,7 @@ def load_hnet_config(config_path: str | Path) -> HNetConfig:
     boundary_feature_cfg = BoundaryFeatureConfig(
         **config.pop("boundary_feature_cfg", {})
     )
+    ffn_moe_cfg = FFNMoEConfig(**config.pop("ffn_moe_cfg", {}))
     return HNetConfig(
         **config,
         attn_cfg=attn_cfg,
@@ -30,6 +32,7 @@ def load_hnet_config(config_path: str | Path) -> HNetConfig:
         kda_cfg=kda_cfg,
         mla_cfg=mla_cfg,
         boundary_feature_cfg=boundary_feature_cfg,
+        ffn_moe_cfg=ffn_moe_cfg,
     )
 
 

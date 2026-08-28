@@ -58,6 +58,10 @@ class TrainingMetricsLogger:
         "ratio_loss",
         "byte_boundary_loss",
         "family_consistency_loss",
+        "moe_aux_loss",
+        "moe_max_expert_fraction",
+        "moe_dropped_fraction",
+        "moe_routing_entropy",
         "total_loss",
         "elapsed_seconds",
         "step_seconds",
@@ -111,6 +115,10 @@ class TrainingMetricsLogger:
         input_bytes_per_second: float,
         cuda_peak_allocated_mb: float,
         family_consistency_loss: float = 0.0,
+        moe_aux_loss: float = 0.0,
+        moe_max_expert_fraction: float = 0.0,
+        moe_dropped_fraction: float = 0.0,
+        moe_routing_entropy: float = 0.0,
         cumulative_input_bytes: int = 0,
     ) -> None:
         with self.output_path.open("a", encoding="utf-8", newline="") as handle:
@@ -123,6 +131,10 @@ class TrainingMetricsLogger:
                     "ratio_loss": ratio_loss,
                     "byte_boundary_loss": byte_boundary_loss,
                     "family_consistency_loss": family_consistency_loss,
+                    "moe_aux_loss": moe_aux_loss,
+                    "moe_max_expert_fraction": moe_max_expert_fraction,
+                    "moe_dropped_fraction": moe_dropped_fraction,
+                    "moe_routing_entropy": moe_routing_entropy,
                     "total_loss": total_loss,
                     "elapsed_seconds": elapsed_seconds,
                     "step_seconds": step_seconds,
@@ -1374,6 +1386,10 @@ def train(training_config: TrainingConfig) -> None:
         ratio_loss_value = 0.0
         byte_boundary_loss_value = 0.0
         family_consistency_loss_value = 0.0
+        moe_aux_loss_value = 0.0
+        moe_max_expert_fraction_value = 0.0
+        moe_dropped_fraction_value = 0.0
+        moe_routing_entropy_value = 0.0
         micro_batches_processed = 0
         input_bytes_processed = 0
 
@@ -1505,6 +1521,12 @@ def train(training_config: TrainingConfig) -> None:
                     )
                 else:
                     family_consistency_loss = ce_loss.new_zeros(())
+                output_moe_aux = getattr(output, "moe_aux_loss", None)
+                moe_aux_loss = (
+                    output_moe_aux.to(dtype=ce_loss.dtype)
+                    if output_moe_aux is not None
+                    else ce_loss.new_zeros(())
+                )
                 loss = (
                     ce_loss
                     + training_config.train_ratio_weight * ratio_loss
@@ -1512,6 +1534,7 @@ def train(training_config: TrainingConfig) -> None:
                     * byte_boundary_loss
                     + training_config.family_consistency_weight
                     * family_consistency_loss
+                    + training_config.moe_aux_loss_weight * moe_aux_loss
                 )
                 loss = loss / training_config.grad_accum_steps
 
@@ -1525,6 +1548,18 @@ def train(training_config: TrainingConfig) -> None:
             family_consistency_loss_value += float(
                 family_consistency_loss.detach()
             )
+            moe_aux_loss_value += float(moe_aux_loss.detach())
+            output_moe_metrics = getattr(output, "moe_metrics", None)
+            if output_moe_metrics is not None:
+                moe_max_expert_fraction_value += float(
+                    output_moe_metrics["max_expert_fraction"].detach()
+                )
+                moe_dropped_fraction_value += float(
+                    output_moe_metrics["dropped_fraction"].detach()
+                )
+                moe_routing_entropy_value += float(
+                    output_moe_metrics["routing_entropy"].detach()
+                )
 
         if micro_batches_processed == 0:
             if training_config.max_steps is None:
@@ -1579,12 +1614,19 @@ def train(training_config: TrainingConfig) -> None:
         average_family_consistency = (
             family_consistency_loss_value / micro_batches_processed
         )
+        average_moe_aux = moe_aux_loss_value / micro_batches_processed
+        average_moe_max_expert = (
+            moe_max_expert_fraction_value / micro_batches_processed
+        )
+        average_moe_dropped = moe_dropped_fraction_value / micro_batches_processed
+        average_moe_entropy = moe_routing_entropy_value / micro_batches_processed
         total_loss = (
             average_ce
             + training_config.train_ratio_weight * average_ratio
             + training_config.byte_boundary_constraint_weight * average_byte_boundary
             + training_config.family_consistency_weight
             * average_family_consistency
+            + training_config.moe_aux_loss_weight * average_moe_aux
         )
         metrics_logger.log(
             step=completed_steps,
@@ -1593,6 +1635,10 @@ def train(training_config: TrainingConfig) -> None:
             ratio_loss=average_ratio,
             byte_boundary_loss=average_byte_boundary,
             family_consistency_loss=average_family_consistency,
+            moe_aux_loss=average_moe_aux,
+            moe_max_expert_fraction=average_moe_max_expert,
+            moe_dropped_fraction=average_moe_dropped,
+            moe_routing_entropy=average_moe_entropy,
             total_loss=total_loss,
             elapsed_seconds=elapsed_seconds,
             step_seconds=step_seconds,

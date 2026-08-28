@@ -50,6 +50,7 @@ class Isotropic(nn.Module):
         stage_idx: int,
         device=None,
         dtype=None,
+        use_ffn_moe: bool = False,
     ):
         factory_kwargs = {"device": device, "dtype": dtype}
         super().__init__()
@@ -96,6 +97,7 @@ class Isotropic(nn.Module):
                     attn_cfg=self.attn_cfg,
                     kda_cfg=self.kda_cfg,
                     mla_cfg=self.mla_cfg,
+                    ffn_moe_cfg=config.ffn_moe_cfg if use_ffn_moe else None,
                     layer_idx=(layer_idx + i),
                     **factory_kwargs,
                 )

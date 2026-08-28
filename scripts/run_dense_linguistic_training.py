@@ -202,6 +202,19 @@ def resume_family_consistency(source: Path) -> dict[str, object]:
     }
 
 
+def resume_ffn_moe(source: Path) -> dict[str, object]:
+    payload = json.loads(
+        (source / "dense_run_config.json").read_text(encoding="utf-8")
+    )
+    feature = payload.get("ffn_moe")
+    if not isinstance(feature, dict):
+        return {"enabled": False, "aux_loss_weight": 0.0}
+    return {
+        "enabled": bool(feature.get("enabled", False)),
+        "aux_loss_weight": float(feature.get("aux_loss_weight", 0.0)),
+    }
+
+
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Run dense family-boundary training.")
     parser.add_argument(
@@ -267,6 +280,8 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--family-consistency-weight", type=float, default=0.0)
     parser.add_argument("--family-consistency-margin", type=float, default=0.15)
     parser.add_argument("--family-consistency-seed", type=int, default=42)
+    parser.add_argument("--ffn-moe", action="store_true")
+    parser.add_argument("--moe-aux-loss-weight", type=float, default=0.01)
     parser.add_argument(
         "--work-root", type=Path, default=Path("/content/hnet_agent_200m_main_work")
     )
@@ -359,6 +374,16 @@ def main() -> None:
                 "resume family-consistency mismatch: "
                 f"source={source_family} requested={requested_family}"
             )
+        requested_moe = {
+            "enabled": args.ffn_moe,
+            "aux_loss_weight": args.moe_aux_loss_weight if args.ffn_moe else 0.0,
+        }
+        source_moe = resume_ffn_moe(args.resume_run_dir)
+        if source_moe != requested_moe:
+            raise ValueError(
+                f"resume FFN-MoE mismatch: source={source_moe} "
+                f"requested={requested_moe}"
+            )
         resume_checkpoint = copy_resume_artifacts(args.resume_run_dir, run_dir)
         resume_source_steps = tuple(
             int(path.stem.split("_")[-1])
@@ -375,14 +400,22 @@ def main() -> None:
 
     base_model_config_path = Path(MODEL_CONFIGS[args.main])
     model_config_path = base_model_config_path
-    if args.boundary_feature_mode == "layer-scalar-mix":
+    if args.boundary_feature_mode == "layer-scalar-mix" or args.ffn_moe:
         model_config_payload = json.loads(
             base_model_config_path.read_text(encoding="utf-8")
         )
-        model_config_payload["boundary_feature_cfg"] = {
-            "mode": "layer_scalar_mix",
-            "final_logit_bias": args.boundary_feature_final_logit_bias,
-        }
+        if args.boundary_feature_mode == "layer-scalar-mix":
+            model_config_payload["boundary_feature_cfg"] = {
+                "mode": "layer_scalar_mix",
+                "final_logit_bias": args.boundary_feature_final_logit_bias,
+            }
+        if args.ffn_moe:
+            model_config_payload["ffn_moe_cfg"] = {
+                "enabled": True,
+                "num_experts": 4,
+                "top_k": 1,
+                "capacity_factor": 1.25,
+            }
         model_config_path = run_dir / "input_model_config.json"
         model_config_path.write_text(
             json.dumps(model_config_payload, ensure_ascii=False, indent=4) + "\n",
@@ -476,6 +509,10 @@ def main() -> None:
                 str(args.family_consistency_seed),
             ]
         )
+    if args.ffn_moe:
+        command.extend(
+            ["--moe-aux-loss-weight", str(args.moe_aux_loss_weight)]
+        )
     for prompt in prompts:
         command.append(chunk_prompt_arg(prompt))
     (run_dir / "dense_run_config.json").write_text(
@@ -512,6 +549,15 @@ def main() -> None:
                     "weight": args.family_consistency_weight,
                     "margin": args.family_consistency_margin,
                     "seed": args.family_consistency_seed,
+                },
+                "ffn_moe": {
+                    "enabled": args.ffn_moe,
+                    "aux_loss_weight": (
+                        args.moe_aux_loss_weight if args.ffn_moe else 0.0
+                    ),
+                    "num_experts": 4 if args.ffn_moe else 0,
+                    "top_k": 1 if args.ffn_moe else 0,
+                    "capacity_factor": 1.25 if args.ffn_moe else 0.0,
                 },
                 "base_model_config": str(base_model_config_path),
                 "base_model_config_sha256": sha256_file(base_model_config_path),

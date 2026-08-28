@@ -9,7 +9,7 @@ from flash_attn.ops.triton.layer_norm import RMSNorm
 from mamba_ssm.modules.mamba2 import Mamba2
 
 from .mha import CausalMHA
-from .mlp import SwiGLU
+from .mlp import SwiGLU, Top1SwiGLUMoE
 
 
 class Mamba2Wrapper(Mamba2):
@@ -40,6 +40,7 @@ def create_block(
     attn_cfg=dict(),
     kda_cfg=dict(),
     mla_cfg=dict(),
+    ffn_moe_cfg=None,
     norm_epsilon=1e-5,
     layer_idx=None,
     residual_in_fp32=True,
@@ -75,11 +76,21 @@ def create_block(
 
     # MLP
     if arch in ("T", "M", "K", "G"):
-        mlp_cls = partial(
-            SwiGLU,
-            d_intermediate=d_intermediate,
-            **factory_kwargs,
-        )
+        if ffn_moe_cfg is not None and ffn_moe_cfg.enabled:
+            mlp_cls = partial(
+                Top1SwiGLUMoE,
+                d_intermediate=d_intermediate,
+                num_experts=ffn_moe_cfg.num_experts,
+                top_k=ffn_moe_cfg.top_k,
+                capacity_factor=ffn_moe_cfg.capacity_factor,
+                **factory_kwargs,
+            )
+        else:
+            mlp_cls = partial(
+                SwiGLU,
+                d_intermediate=d_intermediate,
+                **factory_kwargs,
+            )
     elif arch in ("t", "m", "k", "g"):
         mlp_cls = nn.Identity
     else:

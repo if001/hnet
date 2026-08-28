@@ -51,6 +51,16 @@ class BoundaryFeatureConfig:
 
 
 @dataclass
+class FFNMoEConfig:
+    """Top-1 expert routing for innermost main-network FFNs."""
+
+    enabled: bool = False
+    num_experts: int = 4
+    top_k: int = 1
+    capacity_factor: float = 1.25
+
+
+@dataclass
 class HNetConfig:
     arch_layout: List[Union[str, List]] = field(default_factory=list)
     d_model: List[int] = field(default_factory=list)
@@ -64,6 +74,7 @@ class HNetConfig:
     boundary_feature_cfg: BoundaryFeatureConfig = field(
         default_factory=BoundaryFeatureConfig
     )
+    ffn_moe_cfg: FFNMoEConfig = field(default_factory=FFNMoEConfig)
     tie_embeddings: bool = False
 
     def to_dict(self):

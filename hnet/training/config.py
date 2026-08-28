@@ -52,6 +52,7 @@ class TrainingConfig:
     family_consistency_weight: float = 0.0
     family_consistency_margin: float = 0.15
     family_consistency_seed: int = 42
+    moe_aux_loss_weight: float = 0.0
     compression_ratios: list[float] = field(default_factory=lambda: [4.0])
     lr_multipliers: list[float] = field(default_factory=lambda: [1.0, 1.0])
     seed: int = 42

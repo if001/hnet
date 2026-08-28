@@ -76,9 +76,12 @@ class Top1SwiGLUMoE(nn.Module):
         )
         self.last_aux_loss: torch.Tensor | None = None
         self.last_assignment_fraction: torch.Tensor | None = None
+        self.last_assignment_counts: torch.Tensor | None = None
         self.last_accepted_fraction: torch.Tensor | None = None
+        self.last_accepted_counts: torch.Tensor | None = None
         self.last_dropped_fraction: torch.Tensor | None = None
         self.last_routing_entropy: torch.Tensor | None = None
+        self.last_token_count: int = 0
 
     def forward(self, x):
         original_shape = x.shape
@@ -135,6 +138,13 @@ class Top1SwiGLUMoE(nn.Module):
         entropy = -(probabilities * probabilities.clamp_min(1e-9).log()).sum(dim=-1)
         self.last_routing_entropy = entropy.mean() / math.log(self.num_experts)
         self.last_assignment_fraction = assignment_fraction.detach()
+        self.last_assignment_counts = torch.tensor(
+            assignment_counts, device=flat.device, dtype=torch.long
+        )
         self.last_accepted_fraction = accepted_fraction.detach()
+        self.last_accepted_counts = torch.tensor(
+            accepted_counts, device=flat.device, dtype=torch.long
+        )
         self.last_dropped_fraction = (~accepted).float().mean().detach()
+        self.last_token_count = token_count
         return output.view(original_shape)

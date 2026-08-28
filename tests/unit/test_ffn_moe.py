@@ -20,6 +20,9 @@ def test_top1_moe_reports_capacity_drop_and_router_gradient() -> None:
 
     assert output.shape == inputs.shape
     assert torch.isclose(module.last_assignment_fraction.max(), torch.tensor(1.0))
+    assert module.last_assignment_counts.tolist() == [8, 0, 0, 0]
+    assert module.last_accepted_counts.tolist() == [3, 0, 0, 0]
+    assert module.last_token_count == 8
     assert torch.isclose(module.last_dropped_fraction, torch.tensor(5 / 8))
     assert module.last_routing_entropy > 0.99
     assert module.router.weight.grad is not None

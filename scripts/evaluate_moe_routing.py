@@ -103,7 +103,9 @@ def main() -> None:
     for record in probe["records"]:
         encoded = tokenizer.encode([record["text"]], add_bos=True)[0]["input_ids"]
         device = next(model.parameters()).device
-        input_ids = encoded.to(device=device, dtype=torch.long).unsqueeze(0)
+        input_ids = torch.as_tensor(
+            encoded, device=device, dtype=torch.long
+        ).unsqueeze(0)
         mask = torch.ones_like(input_ids, dtype=torch.bool)
         continuation = (input_ids >= 0x80) & (input_ids <= 0xBF)
         model(

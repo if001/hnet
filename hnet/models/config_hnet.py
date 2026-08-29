@@ -61,6 +61,18 @@ class FFNMoEConfig:
 
 
 @dataclass
+class MixerMoEConfig:
+    """Top-1 mixer routing at selected innermost main-network layers."""
+
+    enabled: bool = False
+    layer_indices: List[int] = field(default_factory=list)
+    expert_arches: List[str] = field(default_factory=lambda: ["T", "K", "G"])
+    top_k: int = 1
+    initial_expert: str = "T"
+    initial_bias: float = 2.0
+
+
+@dataclass
 class HNetConfig:
     arch_layout: List[Union[str, List]] = field(default_factory=list)
     d_model: List[int] = field(default_factory=list)
@@ -75,6 +87,7 @@ class HNetConfig:
         default_factory=BoundaryFeatureConfig
     )
     ffn_moe_cfg: FFNMoEConfig = field(default_factory=FFNMoEConfig)
+    mixer_moe_cfg: MixerMoEConfig = field(default_factory=MixerMoEConfig)
     tie_embeddings: bool = False
 
     def to_dict(self):

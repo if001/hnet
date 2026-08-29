@@ -14,13 +14,14 @@ if str(REPOSITORY_ROOT) not in sys.path:
     sys.path.insert(0, str(REPOSITORY_ROOT))
 
 from hnet.modules.mlp import Top1SwiGLUMoE
+from hnet.modules.mixer_moe import Top1MixerMoE
 from hnet.utils.tokenizers import ByteTokenizer
 from inspect_chunking import load_from_pretrained
 
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
-        description="Aggregate FFN-MoE routing by layer and probe category."
+        description="Aggregate MoE routing by layer and probe category."
     )
     parser.add_argument("--model-path", required=True)
     parser.add_argument("--config-path", required=True)
@@ -46,7 +47,7 @@ def empty_counts(num_experts: int) -> dict[str, Any]:
 
 
 def add_record(
-    target: dict[str, Any], module: Top1SwiGLUMoE
+    target: dict[str, Any], module: Top1SwiGLUMoE | Top1MixerMoE
 ) -> None:
     if (
         module.last_assignment_counts is None
@@ -90,10 +91,10 @@ def main() -> None:
     modules = [
         (name, module)
         for name, module in model.named_modules()
-        if isinstance(module, Top1SwiGLUMoE)
+        if isinstance(module, (Top1SwiGLUMoE, Top1MixerMoE))
     ]
     if not modules:
-        raise ValueError("model has no Top1SwiGLUMoE modules")
+        raise ValueError("model has no supported MoE modules")
     num_experts = modules[0][1].num_experts
     overall = {name: empty_counts(num_experts) for name, _ in modules}
     categories: defaultdict[str, dict[str, dict[str, Any]]] = defaultdict(
@@ -130,6 +131,9 @@ def main() -> None:
         "probe": str(args.probe),
         "record_count": len(probe["records"]),
         "num_experts": num_experts,
+        "expert_labels": list(
+            getattr(modules[0][1], "expert_arches", range(num_experts))
+        ),
         "layers": {name: finalize(value) for name, value in overall.items()},
         "categories": {
             category: {name: finalize(value) for name, value in layers.items()}

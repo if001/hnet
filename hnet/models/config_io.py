@@ -9,6 +9,7 @@ from .config_hnet import (
     HNetConfig,
     KDAConfig,
     MLAConfig,
+    MixerMoEConfig,
     SSMConfig,
 )
 
@@ -25,6 +26,7 @@ def load_hnet_config(config_path: str | Path) -> HNetConfig:
         **config.pop("boundary_feature_cfg", {})
     )
     ffn_moe_cfg = FFNMoEConfig(**config.pop("ffn_moe_cfg", {}))
+    mixer_moe_cfg = MixerMoEConfig(**config.pop("mixer_moe_cfg", {}))
     return HNetConfig(
         **config,
         attn_cfg=attn_cfg,
@@ -33,6 +35,7 @@ def load_hnet_config(config_path: str | Path) -> HNetConfig:
         mla_cfg=mla_cfg,
         boundary_feature_cfg=boundary_feature_cfg,
         ffn_moe_cfg=ffn_moe_cfg,
+        mixer_moe_cfg=mixer_moe_cfg,
     )
 
 

@@ -10,6 +10,7 @@ from mamba_ssm.modules.mamba2 import Mamba2
 
 from .mha import CausalMHA
 from .mlp import SwiGLU, Top1SwiGLUMoE
+from .mixer_moe import Top1MixerMoE
 
 
 class Mamba2Wrapper(Mamba2):
@@ -41,6 +42,7 @@ def create_block(
     kda_cfg=dict(),
     mla_cfg=dict(),
     ffn_moe_cfg=None,
+    mixer_moe_cfg=None,
     norm_epsilon=1e-5,
     layer_idx=None,
     residual_in_fp32=True,
@@ -50,7 +52,20 @@ def create_block(
     factory_kwargs = {"device": device, "dtype": dtype}
 
     # Mixer
-    if arch in ("t", "T"):
+    if mixer_moe_cfg is not None and mixer_moe_cfg.enabled:
+        mixer_cls = partial(
+            Top1MixerMoE,
+            attn_cfg=attn_cfg,
+            kda_cfg=kda_cfg,
+            mla_cfg=mla_cfg,
+            expert_arches=mixer_moe_cfg.expert_arches,
+            top_k=mixer_moe_cfg.top_k,
+            initial_expert=mixer_moe_cfg.initial_expert,
+            initial_bias=mixer_moe_cfg.initial_bias,
+            layer_idx=layer_idx,
+            **factory_kwargs,
+        )
+    elif arch in ("t", "T"):
         mixer_cls = partial(
             CausalMHA, **attn_cfg, **factory_kwargs, layer_idx=layer_idx
         )

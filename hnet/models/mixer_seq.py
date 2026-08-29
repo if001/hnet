@@ -10,6 +10,7 @@ from .config_hnet import HNetConfig
 
 from hnet.modules.dc import BoundaryOverride, RoutingModuleOutput
 from hnet.modules.mlp import Top1SwiGLUMoE
+from hnet.modules.mixer_moe import Top1MixerMoE
 from hnet.modules.utils import apply_optimization_params
 
 @dataclass
@@ -88,7 +89,7 @@ class HNetForCausalLM(nn.Module, GenerationMixin):
         modules = [
             module
             for module in self.modules()
-            if isinstance(module, Top1SwiGLUMoE)
+            if isinstance(module, (Top1SwiGLUMoE, Top1MixerMoE))
             and module.last_aux_loss is not None
         ]
         if not modules:

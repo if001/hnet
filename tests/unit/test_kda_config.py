@@ -1,6 +1,11 @@
 import json
 
-from hnet.models.config_hnet import BoundaryFeatureConfig, KDAConfig, MLAConfig
+from hnet.models.config_hnet import (
+    BoundaryFeatureConfig,
+    KDAConfig,
+    MLAConfig,
+    MixerMoEConfig,
+)
 from hnet.models.config_io import load_hnet_config, save_hnet_config
 
 
@@ -51,6 +56,38 @@ def test_old_config_gets_empty_kda_config(tmp_path):
     assert load_hnet_config(source).kda_cfg == KDAConfig()
     assert load_hnet_config(source).mla_cfg == MLAConfig()
     assert load_hnet_config(source).boundary_feature_cfg == BoundaryFeatureConfig()
+    assert load_hnet_config(source).mixer_moe_cfg == MixerMoEConfig()
+
+
+def test_mixer_moe_config_round_trip(tmp_path):
+    source = tmp_path / "model.json"
+    source.write_text(
+        json.dumps(
+            {
+                "arch_layout": ["T4"],
+                "d_model": [8],
+                "d_intermediate": [16],
+                "ssm_cfg": {},
+                "attn_cfg": {"num_heads": [1]},
+                "mixer_moe_cfg": {
+                    "enabled": True,
+                    "layer_indices": [1, 2],
+                    "expert_arches": ["T", "K", "G"],
+                    "initial_bias": 1.5,
+                },
+            }
+        ),
+        encoding="utf-8",
+    )
+    config = load_hnet_config(source)
+    assert config.mixer_moe_cfg == MixerMoEConfig(
+        enabled=True,
+        layer_indices=[1, 2],
+        expert_arches=["T", "K", "G"],
+        initial_bias=1.5,
+    )
+    saved = save_hnet_config(config, tmp_path / "saved.json")
+    assert load_hnet_config(saved) == config
 
 
 def test_boundary_feature_config_round_trip(tmp_path):

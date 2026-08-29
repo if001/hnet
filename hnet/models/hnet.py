@@ -86,6 +86,7 @@ class HNet(nn.Module):
                 _pos_idx_dict = {"pos_idx": _pos_idx}
                 if self.is_innermost:
                     _pos_idx_dict["use_ffn_moe"] = True
+                    _pos_idx_dict["use_mixer_moe"] = True
             else:
                 SubModel = HNet
                 _stage_idx = stage_idx + 1

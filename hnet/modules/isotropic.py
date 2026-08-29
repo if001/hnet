@@ -12,6 +12,7 @@ import torch.nn as nn
 from flash_attn.ops.triton.layer_norm import RMSNorm
 
 from hnet.modules.block import create_block
+from hnet.modules.mixer_moe import Top1MixerMoE
 from hnet.modules.utils import get_seq_idx, get_stage_cfg
 
 from hnet.models.config_hnet import HNetConfig
@@ -51,6 +52,7 @@ class Isotropic(nn.Module):
         device=None,
         dtype=None,
         use_ffn_moe: bool = False,
+        use_mixer_moe: bool = False,
     ):
         factory_kwargs = {"device": device, "dtype": dtype}
         super().__init__()
@@ -79,6 +81,17 @@ class Isotropic(nn.Module):
             else {}
         )
 
+        mixer_moe_indices = set(config.mixer_moe_cfg.layer_indices)
+        if use_mixer_moe and config.mixer_moe_cfg.enabled:
+            invalid_indices = sorted(
+                index
+                for index in mixer_moe_indices
+                if index < 0 or index >= sum(int(count) for _, count in layout_parse)
+            )
+            if invalid_indices:
+                raise ValueError(
+                    f"Mixer-MoE layer indices are out of range: {invalid_indices}"
+                )
         layers = []
         layer_idx = 0
         self.arch_full = []
@@ -98,6 +111,13 @@ class Isotropic(nn.Module):
                     kda_cfg=self.kda_cfg,
                     mla_cfg=self.mla_cfg,
                     ffn_moe_cfg=config.ffn_moe_cfg if use_ffn_moe else None,
+                    mixer_moe_cfg=(
+                        config.mixer_moe_cfg
+                        if use_mixer_moe
+                        and config.mixer_moe_cfg.enabled
+                        and (layer_idx + i) in mixer_moe_indices
+                        else None
+                    ),
                     layer_idx=(layer_idx + i),
                     **factory_kwargs,
                 )
@@ -179,6 +199,9 @@ class Isotropic(nn.Module):
                     residual = None if residual is None else residual.unsqueeze(0)
             elif arch in ("t", "T", "g", "G"):
                 layer_mixer_kwargs = attn_mixer_kwargs
+                if isinstance(layer.mixer, Top1MixerMoE):
+                    layer_mixer_kwargs = copy.deepcopy(attn_mixer_kwargs)
+                    layer_mixer_kwargs["attention_mask"] = mask
                 if hidden_states.dim() == 3 and packed:
                     hidden_states = hidden_states.squeeze(0)
                     residual = None if residual is None else residual.squeeze(0)

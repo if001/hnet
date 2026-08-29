@@ -215,6 +215,19 @@ def resume_ffn_moe(source: Path) -> dict[str, object]:
     }
 
 
+def resume_mixer_moe(source: Path) -> dict[str, object]:
+    payload = json.loads(
+        (source / "dense_run_config.json").read_text(encoding="utf-8")
+    )
+    feature = payload.get("mixer_moe")
+    if not isinstance(feature, dict):
+        return {"enabled": False, "aux_loss_weight": 0.0}
+    return {
+        "enabled": bool(feature.get("enabled", False)),
+        "aux_loss_weight": float(feature.get("aux_loss_weight", 0.0)),
+    }
+
+
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Run dense family-boundary training.")
     parser.add_argument(
@@ -281,6 +294,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--family-consistency-margin", type=float, default=0.15)
     parser.add_argument("--family-consistency-seed", type=int, default=42)
     parser.add_argument("--ffn-moe", action="store_true")
+    parser.add_argument("--mixer-moe", action="store_true")
     parser.add_argument("--moe-aux-loss-weight", type=float, default=0.01)
     parser.add_argument(
         "--work-root", type=Path, default=Path("/content/hnet_agent_200m_main_work")
@@ -295,6 +309,10 @@ def parse_args() -> argparse.Namespace:
 
 def main() -> None:
     args = parse_args()
+    if args.ffn_moe and args.mixer_moe:
+        raise ValueError("FFN-MoE and Mixer-MoE cannot be enabled together")
+    if args.mixer_moe and args.main != "t26":
+        raise ValueError("The P5 Mixer-MoE pilot currently supports only T26")
     if git_output("branch", "--show-current") != EXPECTED_BRANCH:
         raise RuntimeError(f"Training must run on {EXPECTED_BRANCH}")
     for path in (args.packed_data_dir, args.packed_validation_data_dir):
@@ -384,6 +402,18 @@ def main() -> None:
                 f"resume FFN-MoE mismatch: source={source_moe} "
                 f"requested={requested_moe}"
             )
+        requested_mixer_moe = {
+            "enabled": args.mixer_moe,
+            "aux_loss_weight": (
+                args.moe_aux_loss_weight if args.mixer_moe else 0.0
+            ),
+        }
+        source_mixer_moe = resume_mixer_moe(args.resume_run_dir)
+        if source_mixer_moe != requested_mixer_moe:
+            raise ValueError(
+                "resume Mixer-MoE mismatch: "
+                f"source={source_mixer_moe} requested={requested_mixer_moe}"
+            )
         resume_checkpoint = copy_resume_artifacts(args.resume_run_dir, run_dir)
         resume_source_steps = tuple(
             int(path.stem.split("_")[-1])
@@ -400,7 +430,11 @@ def main() -> None:
 
     base_model_config_path = Path(MODEL_CONFIGS[args.main])
     model_config_path = base_model_config_path
-    if args.boundary_feature_mode == "layer-scalar-mix" or args.ffn_moe:
+    if (
+        args.boundary_feature_mode == "layer-scalar-mix"
+        or args.ffn_moe
+        or args.mixer_moe
+    ):
         model_config_payload = json.loads(
             base_model_config_path.read_text(encoding="utf-8")
         )
@@ -415,6 +449,37 @@ def main() -> None:
                 "num_experts": 4,
                 "top_k": 1,
                 "capacity_factor": 1.25,
+            }
+        if args.mixer_moe:
+            model_config_payload.setdefault(
+                "kda_cfg",
+                {
+                    "num_heads": [8, 8, 8],
+                    "head_dim": [64, 64, 96],
+                    "short_conv_kernel_size": 4,
+                    "use_full_rank_gate": True,
+                    "gate_lower_bound": -5.0,
+                },
+            )
+            model_config_payload.setdefault(
+                "mla_cfg",
+                {
+                    "num_heads": [8, 8, 8],
+                    "q_lora_rank": [256, 256, 384],
+                    "kv_lora_rank": [128, 128, 192],
+                    "qk_nope_head_dim": [48, 48, 48],
+                    "qk_rope_head_dim": [16, 16, 16],
+                    "v_head_dim": [48, 48, 48],
+                    "use_output_gate": True,
+                },
+            )
+            model_config_payload["mixer_moe_cfg"] = {
+                "enabled": True,
+                "layer_indices": [11, 12, 13, 14],
+                "expert_arches": ["T", "K", "G"],
+                "top_k": 1,
+                "initial_expert": "T",
+                "initial_bias": 2.0,
             }
         model_config_path = run_dir / "input_model_config.json"
         model_config_path.write_text(
@@ -509,7 +574,7 @@ def main() -> None:
                 str(args.family_consistency_seed),
             ]
         )
-    if args.ffn_moe:
+    if args.ffn_moe or args.mixer_moe:
         command.extend(
             ["--moe-aux-loss-weight", str(args.moe_aux_loss_weight)]
         )
@@ -558,6 +623,18 @@ def main() -> None:
                     "num_experts": 4 if args.ffn_moe else 0,
                     "top_k": 1 if args.ffn_moe else 0,
                     "capacity_factor": 1.25 if args.ffn_moe else 0.0,
+                },
+                "mixer_moe": {
+                    "enabled": args.mixer_moe,
+                    "aux_loss_weight": (
+                        args.moe_aux_loss_weight if args.mixer_moe else 0.0
+                    ),
+                    "layer_indices": [11, 12, 13, 14] if args.mixer_moe else [],
+                    "expert_arches": ["T", "K", "G"] if args.mixer_moe else [],
+                    "top_k": 1 if args.mixer_moe else 0,
+                    "initial_expert": "T" if args.mixer_moe else None,
+                    "initial_bias": 2.0 if args.mixer_moe else 0.0,
+                    "execution": "dense_experts_hard_output_route",
                 },
                 "base_model_config": str(base_model_config_path),
                 "base_model_config_sha256": sha256_file(base_model_config_path),

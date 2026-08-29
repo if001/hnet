@@ -65,6 +65,15 @@ def parse_args() -> TrainingConfig:
         help="Optional packed validation dataset directory.",
     )
     parser.add_argument(
+        "--packed-curriculum-base-seq-len",
+        type=int,
+        default=None,
+        help=(
+            "Read packed data as aligned sub-sequences of this canonical "
+            "context length. The batch size must equal base_seq_len / seq_len."
+        ),
+    )
+    parser.add_argument(
         "--validation-dataset",
         action="append",
         dest="validation_datasets",
@@ -114,6 +123,14 @@ def parse_args() -> TrainingConfig:
         type=int,
         default=None,
         help="Also validate when cumulative raw input bytes cross this interval.",
+    )
+    parser.add_argument(
+        "--validation-step",
+        action="append",
+        dest="validation_steps",
+        type=int,
+        default=[],
+        help="Also validate at this exact global optimizer step. Repeatable.",
     )
     parser.add_argument("--validation-max-batches", type=int, default=20)
     parser.add_argument("--validation-split-ratio", type=float, default=0.1)
@@ -342,6 +359,7 @@ def parse_args() -> TrainingConfig:
         datasets=datasets,
         packed_data_dir=args.packed_data_dir,
         packed_validation_data_dir=args.packed_validation_data_dir,
+        packed_curriculum_base_seq_len=args.packed_curriculum_base_seq_len,
         validation_datasets=validation_datasets,
         chunk_prompts=[p for p in (args.chunk_prompts or []) if p.strip()],
         seq_len=args.seq_len,
@@ -360,6 +378,7 @@ def parse_args() -> TrainingConfig:
         save_every_bytes=args.save_every_bytes,
         validation_every=args.validation_every,
         validation_every_bytes=args.validation_every_bytes,
+        validation_steps=args.validation_steps,
         validation_max_batches=args.validation_max_batches,
         validation_split_ratio=args.validation_split_ratio,
         train_ratio_weight=args.train_ratio_weight,

@@ -347,3 +347,166 @@ class PackedMixByteDataset(torch.utils.data.Dataset):
             ).long(),
             "is_byte_level": torch.tensor(self.is_byte_level, dtype=torch.bool),
         }
+
+
+class PackedCurriculumByteDataset(torch.utils.data.Dataset):
+    """Read aligned sub-sequences from a shuffled canonical long-context stream.
+
+    A canonical block contains ``base_seq_len + 1`` tokens. Shorter contexts
+    split that block into adjacent, one-token-overlapping training examples.
+    When the DataLoader batch size is ``base_seq_len // seq_len``, every batch
+    consumes exactly one canonical block at every curriculum context length.
+    """
+
+    def __init__(
+        self,
+        packed_dir: str | Path,
+        seq_len: int,
+        base_seq_len: int,
+        shuffle: bool = True,
+        seed: int = 42,
+        shard_indices: Sequence[int] | None = None,
+        start_block: int = 0,
+    ) -> None:
+        super().__init__()
+        if seq_len <= 0 or base_seq_len <= 0:
+            raise ValueError("seq_len and base_seq_len must be positive")
+        if base_seq_len % seq_len != 0:
+            raise ValueError(
+                f"base_seq_len={base_seq_len} must be divisible by seq_len={seq_len}"
+            )
+
+        self.packed_dir = Path(packed_dir)
+        self.seq_len = int(seq_len)
+        self.base_seq_len = int(base_seq_len)
+        self.subsequences_per_block = self.base_seq_len // self.seq_len
+        self.base_stride = self.base_seq_len + 1
+        self.shuffle = bool(shuffle)
+        self.seed = int(seed)
+        self._mask = torch.ones(self.seq_len, dtype=torch.bool)
+
+        mix = load_mix_manifest(self.packed_dir)
+        raw_byte_lengths = mix.get("token_byte_lengths")
+        if isinstance(raw_byte_lengths, list):
+            self._token_byte_lengths = np.asarray(raw_byte_lengths, dtype=np.int64)
+            self.is_byte_level = bool(mix.get("is_byte_level", False))
+        else:
+            self._token_byte_lengths = np.ones(256, dtype=np.int64)
+            self.is_byte_level = True
+
+        all_shards = list_packed_shards(self.packed_dir)
+        if shard_indices is None:
+            self.shards = all_shards
+        else:
+            self.shards = [
+                all_shards[index]
+                for index in shard_indices
+                if 0 <= int(index) < len(all_shards)
+            ]
+        dtypes = {shard.dtype for shard in self.shards}
+        if len(dtypes) > 1:
+            raise ValueError(f"Packed shards use mixed token dtypes: {sorted(dtypes)}")
+
+        self._block_counts = np.asarray(
+            [max(0, shard.token_count // self.base_stride) for shard in self.shards],
+            dtype=np.int64,
+        )
+        self.total_blocks = int(self._block_counts.sum())
+        self._block_shard_ids = np.repeat(
+            np.arange(len(self.shards), dtype=np.int64), self._block_counts
+        )
+        self._block_offsets = np.empty(self.total_blocks, dtype=np.int64)
+        cursor = 0
+        for count in self._block_counts.tolist():
+            self._block_offsets[cursor : cursor + count] = np.arange(
+                count, dtype=np.int64
+            )
+            cursor += count
+        self._block_order = np.arange(self.total_blocks, dtype=np.int64)
+        if self.shuffle and self.total_blocks > 1:
+            rng = np.random.default_rng(self.seed)
+            rng.shuffle(self._block_order)
+
+        self.start_block = min(max(0, int(start_block)), self.total_blocks)
+        self._shard_memmaps: list[np.memmap] = [
+            np.memmap(shard.bin_path, mode="r", dtype=np.dtype(shard.dtype))
+            for shard in self.shards
+        ]
+
+    def __len__(self) -> int:
+        return (
+            self.total_blocks - self.start_block
+        ) * self.subsequences_per_block
+
+    def order_audit(self, sample_limit: int = 32) -> dict[str, object]:
+        canonical = np.asarray(self._block_order, dtype="<i8")
+        digest = hashlib.sha256(canonical.tobytes(order="C")).hexdigest()
+        blocks: list[dict[str, int]] = []
+        stop = min(
+            self.start_block + max(0, sample_limit),
+            self.total_blocks,
+        )
+        for position in range(self.start_block, stop):
+            block_index = int(self._block_order[position])
+            blocks.append(
+                {
+                    "position": position,
+                    "block_index": block_index,
+                    "shard_id": int(self._block_shard_ids[block_index]),
+                    "block_offset": int(self._block_offsets[block_index]),
+                }
+            )
+        return {
+            "mode": "aligned_context_curriculum",
+            "seed": self.seed,
+            "shuffle": self.shuffle,
+            "seq_len": self.seq_len,
+            "base_seq_len": self.base_seq_len,
+            "subsequences_per_block": self.subsequences_per_block,
+            "start_block": self.start_block,
+            "total_blocks": self.total_blocks,
+            "block_order_sha256": digest,
+            "block_prefix": blocks,
+        }
+
+    def __getitem__(self, index: int) -> dict[str, torch.Tensor]:
+        if index < 0 or index >= len(self):
+            raise IndexError(index)
+
+        relative_block = index // self.subsequences_per_block
+        subsequence = index % self.subsequences_per_block
+        order_position = self.start_block + relative_block
+        block_index = int(self._block_order[order_position])
+        shard_index = int(self._block_shard_ids[block_index])
+        block_offset = int(self._block_offsets[block_index])
+        start = block_offset * self.base_stride + subsequence * self.seq_len
+        end = start + self.seq_len + 1
+        chunk = np.asarray(
+            self._shard_memmaps[shard_index][start:end], dtype=np.int64
+        )
+        if chunk.size != self.seq_len + 1:
+            raise RuntimeError(
+                f"incomplete curriculum chunk: expected={self.seq_len + 1} "
+                f"actual={chunk.size}"
+            )
+        targets = chunk[1:]
+        if targets.size and int(targets.max()) >= self._token_byte_lengths.shape[0]:
+            raise ValueError(
+                "Packed token id exceeds token_byte_lengths lookup: "
+                f"max_id={int(targets.max())} "
+                f"lookup={self._token_byte_lengths.shape[0]}"
+            )
+
+        return {
+            "input_ids": torch.from_numpy(chunk[:-1].copy()).long(),
+            "labels": torch.from_numpy(targets.copy()).long(),
+            "mask": self._mask,
+            "target_byte_lengths": torch.from_numpy(
+                self._token_byte_lengths[targets].copy()
+            ).long(),
+            "is_byte_level": torch.tensor(self.is_byte_level, dtype=torch.bool),
+            "curriculum_block_position": torch.tensor(
+                order_position, dtype=torch.long
+            ),
+            "curriculum_subsequence": torch.tensor(subsequence, dtype=torch.long),
+        }

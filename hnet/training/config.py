@@ -22,6 +22,7 @@ class TrainingConfig:
     )
     packed_data_dir: str | None = None
     packed_validation_data_dir: str | None = None
+    packed_curriculum_base_seq_len: int | None = None
     validation_datasets: list[DatasetSource] | None = None
     chunk_prompts: list[str] = field(default_factory=list)
     seq_len: int = 512
@@ -40,6 +41,7 @@ class TrainingConfig:
     save_every_bytes: int | None = None
     validation_every: int = 100
     validation_every_bytes: int | None = None
+    validation_steps: list[int] = field(default_factory=list)
     validation_max_batches: int = 20
     validation_split_ratio: float = 0.1
     train_ratio_weight: float = 0.02

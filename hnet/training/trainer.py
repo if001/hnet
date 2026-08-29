@@ -40,6 +40,7 @@ from .seeding import (
 )
 from .data import (
     DefaultRecordFormatter,
+    PackedCurriculumByteDataset,
     PackedMixByteDataset,
     StreamingByteDataset,
     list_packed_shards,
@@ -315,14 +316,40 @@ def create_packed_dataloader(
     effective_num_workers = (
         training_config.num_workers if num_workers is None else num_workers
     )
-    dataset = PackedMixByteDataset(
-        packed_dir=packed_dir,
-        seq_len=training_config.seq_len,
-        shuffle=shuffle,
-        seed=resolve_training_seeds(training_config).data_order_seed,
-        shard_indices=shard_indices,
-        start_micro_batch=start_micro_batch,
-    )
+    if training_config.packed_curriculum_base_seq_len is None:
+        dataset: PackedMixByteDataset | PackedCurriculumByteDataset = (
+            PackedMixByteDataset(
+                packed_dir=packed_dir,
+                seq_len=training_config.seq_len,
+                shuffle=shuffle,
+                seed=resolve_training_seeds(training_config).data_order_seed,
+                shard_indices=shard_indices,
+                start_micro_batch=start_micro_batch,
+            )
+        )
+    else:
+        base_seq_len = training_config.packed_curriculum_base_seq_len
+        if base_seq_len % training_config.seq_len != 0:
+            raise ValueError(
+                "packed curriculum base sequence length must be divisible by "
+                f"seq_len: base={base_seq_len} seq={training_config.seq_len}"
+            )
+        expected_batch_size = base_seq_len // training_config.seq_len
+        if training_config.batch_size != expected_batch_size:
+            raise ValueError(
+                "aligned packed curriculum requires one canonical block per "
+                f"batch: expected batch_size={expected_batch_size}, "
+                f"got {training_config.batch_size}"
+            )
+        dataset = PackedCurriculumByteDataset(
+            packed_dir=packed_dir,
+            seq_len=training_config.seq_len,
+            base_seq_len=base_seq_len,
+            shuffle=shuffle,
+            seed=resolve_training_seeds(training_config).data_order_seed,
+            shard_indices=shard_indices,
+            start_block=start_micro_batch,
+        )
     dataloader_kwargs: dict[str, object] = {}
     dataloader_kwargs["generator"] = torch.Generator().manual_seed(
         resolve_training_seeds(training_config).data_order_seed
@@ -1269,7 +1296,9 @@ def train(training_config: TrainingConfig) -> None:
             num_workers=0,
         )
 
-    if isinstance(dataloader.dataset, PackedMixByteDataset):
+    if isinstance(
+        dataloader.dataset, (PackedMixByteDataset, PackedCurriculumByteDataset)
+    ):
         seed_manifest["data_order"] = dataloader.dataset.order_audit()
     seed_manifest_path = output_dir / "seed_manifest.json"
     seed_manifest_path.write_text(
@@ -1723,6 +1752,8 @@ def train(training_config: TrainingConfig) -> None:
         validation_due = (
             training_config.validation_every > 0
             and completed_steps % training_config.validation_every == 0
+        ) or (
+            completed_steps in training_config.validation_steps
         ) or crossed_interval(
             previous_input_bytes,
             cumulative_input_bytes,

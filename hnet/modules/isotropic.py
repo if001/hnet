@@ -69,15 +69,22 @@ class Isotropic(nn.Module):
         layout_parse = re.findall(r"([gGkKmMtT])(\d+)", arch_layout)
         if "".join(f"{arch}{count}" for arch, count in layout_parse) != arch_layout:
             raise ValueError(f"Invalid architecture layout: {arch_layout!r}")
+        mixer_expert_arches = (
+            set(config.mixer_moe_cfg.expert_arches)
+            if use_mixer_moe and config.mixer_moe_cfg.enabled
+            else set()
+        )
         self.kda_cfg = (
             get_stage_cfg(config.kda_cfg, stage_idx)
             if any(arch in ("k", "K") for arch, _ in layout_parse)
+            or "K" in mixer_expert_arches
             else {}
         )
 
         self.mla_cfg = (
             get_stage_cfg(config.mla_cfg, stage_idx)
             if any(arch in ("g", "G") for arch, _ in layout_parse)
+            or "G" in mixer_expert_arches
             else {}
         )
 

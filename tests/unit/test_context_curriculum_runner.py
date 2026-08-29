@@ -5,6 +5,7 @@ from scripts.run_context_curriculum_training import (
     BASE_SEQ_LEN,
     BYTES_PER_UPDATE,
     LEGS,
+    REQUIRED_CANONICAL_BLOCKS,
     TOTAL_TRAIN_BYTES,
     build_train_command,
     expected_validation_steps,
@@ -30,6 +31,7 @@ def option_value(command: list[str], option: str) -> str:
 
 
 def test_curriculum_legs_keep_one_canonical_block_per_micro_batch() -> None:
+    assert REQUIRED_CANONICAL_BLOCKS == 600 * 32
     for name in ("shared-a", "l1-b", "l1-c"):
         leg = LEGS[name]
         assert leg.seq_len * leg.batch_size == BASE_SEQ_LEN

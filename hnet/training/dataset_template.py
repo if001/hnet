@@ -34,6 +34,43 @@ SOURCES_JA8_EN1_CODE1: list[DatasetSource] = [
     ),
 ]
 
+
+# Context-curriculum corpus. This keeps the same 8:1:1 source family as
+# SOURCES_JA8_EN1_CODE1 while providing enough unique bytes for 600 updates at
+# 1 MiB/update without repeating the canonical 32K block stream.
+SOURCES_JA8_EN1_CODE1_CONTEXT_1B: list[DatasetSource] = [
+    DatasetSource(
+        name="hotchpotch/fineweb-2-edu-japanese",
+        config_name="small_tokens_cleaned",
+        split="train",
+        take_examples=136_000,
+        skip_examples=10_000,
+    ),
+    DatasetSource(
+        name="wikimedia/wikipedia",
+        config_name="20231101.ja",
+        split="train",
+        take_examples=24_000,
+    ),
+    DatasetSource(
+        name="HuggingFaceFW/fineweb-edu",
+        config_name="sample-10BT",
+        split="train",
+        take_examples=16_000,
+    ),
+    DatasetSource(
+        name="wikimedia/wikipedia",
+        config_name="20231101.en",
+        split="train",
+        take_examples=4_000,
+    ),
+    DatasetSource(
+        name="codeparrot/codeparrot-clean",
+        split="train",
+        take_examples=20_000,
+    ),
+]
+
 # JA only
 SOURCES_JA: list[DatasetSource] = [
     DatasetSource(

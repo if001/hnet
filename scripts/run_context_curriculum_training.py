@@ -32,6 +32,7 @@ BASE_SEQ_LEN = 32768
 BYTES_PER_UPDATE = 1024 * 1024
 TOTAL_STEPS = 600
 TOTAL_TRAIN_BYTES = TOTAL_STEPS * BYTES_PER_UPDATE
+REQUIRED_CANONICAL_BLOCKS = TOTAL_STEPS * 32
 
 
 @dataclass(frozen=True)
@@ -93,6 +94,26 @@ def latest_checkpoint(run_dir: Path) -> tuple[Path, int]:
         raise FileNotFoundError(f"no checkpoint in resume run: {run_dir}")
     checkpoint = checkpoints[-1]
     return checkpoint, int(checkpoint.stem.split("_")[-1])
+
+
+def packed_canonical_block_count(packed_dir: Path) -> int:
+    mix = json.loads((packed_dir / "mix_manifest.json").read_text(encoding="utf-8"))
+    datasets = mix.get("datasets")
+    if not isinstance(datasets, list):
+        raise ValueError("packed mix manifest has no dataset list")
+    total = 0
+    for dataset in datasets:
+        if not isinstance(dataset, dict) or not isinstance(dataset.get("manifest"), str):
+            continue
+        manifest_path = packed_dir / dataset["manifest"]
+        manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+        shards = manifest.get("shards")
+        if not isinstance(shards, list):
+            continue
+        for shard in shards:
+            if isinstance(shard, dict) and isinstance(shard.get("token_count"), int):
+                total += max(0, int(shard["token_count"]) // (BASE_SEQ_LEN + 1))
+    return total
 
 
 def seed_factors(args: argparse.Namespace) -> dict[str, int]:
@@ -231,6 +252,13 @@ def main() -> None:
     for path in (args.packed_data_dir, args.packed_validation_data_dir):
         if not (path / "mix_manifest.json").is_file():
             raise FileNotFoundError(path)
+    canonical_blocks = packed_canonical_block_count(args.packed_data_dir)
+    if canonical_blocks < REQUIRED_CANONICAL_BLOCKS:
+        raise ValueError(
+            "context curriculum corpus is too small for a non-repeating "
+            f"600-update stream: required={REQUIRED_CANONICAL_BLOCKS} "
+            f"available={canonical_blocks}"
+        )
     if args.initial_model_checkpoint is not None and args.resume_run_dir is not None:
         raise ValueError("initial checkpoint and resume run are mutually exclusive")
 
@@ -270,6 +298,8 @@ def main() -> None:
         "expected_resume_step": leg.expected_resume_step,
         "transition_steps": list(leg.transition_steps),
         "total_train_bytes": TOTAL_TRAIN_BYTES,
+        "required_canonical_blocks": REQUIRED_CANONICAL_BLOCKS,
+        "available_canonical_blocks": canonical_blocks,
         "seed_factors": seeds,
         "probe": str(args.probe),
         "probe_sha256": sha256_file(args.probe),

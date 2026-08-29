@@ -44,6 +44,18 @@ context phaseごとに少なくとも200 optimizer updatesを確保し、境界�
 - document境界を跨ぐpacking、padding、truncation規則を固定し、各phaseの有効token率を保存する。
 - LRをstep基準にするかbyte基準にするかを混ぜない。primaryは累積raw-byte scheduleとし、step scheduleを補助controlにする。
 
+### 4.1 実行時に固定したcanonical stream
+
+- 32,768 bytesをcanonical blockとし、2Kでは16分割、8Kでは4分割、32Kでは分割せずに読む。
+- micro batchは2K=`16`、8K=`4`、32K=`1`、gradient accumulationは全条件`32`とする。これにより
+  1 optimizer updateは全phaseで正確に1,048,576 input bytesになる。
+- shuffleは個別sequenceではなくcanonical block単位で一度だけ行う。contextを変更してもblock hash、shard、byte offset列を
+  変えない。
+- 600 updateには19,200 canonical block、約629M input bytesが必要である。corpus反復を避けるため、既存8:1:1分布を維持した
+  `SOURCES_JA8_EN1_CODE1_CONTEXT_1B`をP6専用にpackし、必要block数を開始前に監査する。
+- phase Aはblock 0--6,399、phase Bは6,400--12,799、phase Cは12,800--19,199を使う。checkpointには消費済み
+  canonical block数を保存し、phase移行と中断再開の双方で同じstream位置から続ける。
+
 ## 5. 評価
 
 ### 5.1 既存の短probe

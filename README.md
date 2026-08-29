@@ -120,6 +120,9 @@ context curriculumで同じ32K block順を2K/8K/32Kに分割して使う場合�
 `--batch-size`は`32768 / --seq-len`にする必要があります。例えば2K、8K、32Kでは
 それぞれ16、4、1です。phase移行直後など、通常間隔外で評価するstepは
 `--validation-step 201 --validation-step 205`のように追加できます。
+複数sourceのraw-byte比を固定する場合は、例えば
+`--packed-curriculum-group-weight ja=0.8 --packed-curriculum-group-weight en=0.1 --packed-curriculum-group-weight code=0.1`
+を指定すると、canonical blockを重複なしで層化します。
 
 検証用 packed データを別途使う場合:
 

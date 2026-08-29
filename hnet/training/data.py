@@ -131,6 +131,7 @@ def compute_packed_total_tokens(packed_dir: str | Path) -> int:
 @dataclass(frozen=True)
 class PackedShard:
     dataset_name: str
+    config_name: str | None
     bin_path: Path
     token_count: int
     dtype: str = "uint8"
@@ -148,6 +149,9 @@ def _load_shards_from_mix_manifest(packed_dir: str | Path) -> list[PackedShard]:
         if not isinstance(dataset_entry, Mapping):
             continue
         dataset_name = str(dataset_entry.get("name", "dataset"))
+        config_name = dataset_entry.get("config_name")
+        if not isinstance(config_name, str):
+            config_name = None
         manifest_rel = dataset_entry.get("manifest")
         if not isinstance(manifest_rel, str):
             continue
@@ -171,6 +175,7 @@ def _load_shards_from_mix_manifest(packed_dir: str | Path) -> list[PackedShard]:
             shards.append(
                 PackedShard(
                     dataset_name=dataset_name,
+                    config_name=config_name,
                     bin_path=bin_path,
                     token_count=int(token_count),
                     dtype=dtype,
@@ -367,6 +372,7 @@ class PackedCurriculumByteDataset(torch.utils.data.Dataset):
         seed: int = 42,
         shard_indices: Sequence[int] | None = None,
         start_block: int = 0,
+        group_weights: Mapping[str, float] | None = None,
     ) -> None:
         super().__init__()
         if seq_len <= 0 or base_seq_len <= 0:
@@ -383,6 +389,11 @@ class PackedCurriculumByteDataset(torch.utils.data.Dataset):
         self.base_stride = self.base_seq_len + 1
         self.shuffle = bool(shuffle)
         self.seed = int(seed)
+        self.group_weights = (
+            {str(key): float(value) for key, value in group_weights.items()}
+            if group_weights is not None
+            else None
+        )
         self._mask = torch.ones(self.seq_len, dtype=torch.bool)
 
         mix = load_mix_manifest(self.packed_dir)
@@ -423,7 +434,9 @@ class PackedCurriculumByteDataset(torch.utils.data.Dataset):
             )
             cursor += count
         self._block_order = np.arange(self.total_blocks, dtype=np.int64)
-        if self.shuffle and self.total_blocks > 1:
+        if self.shuffle and self.total_blocks > 1 and self.group_weights is not None:
+            self._block_order = self._build_group_weighted_order()
+        elif self.shuffle and self.total_blocks > 1:
             rng = np.random.default_rng(self.seed)
             rng.shuffle(self._block_order)
 
@@ -437,6 +450,61 @@ class PackedCurriculumByteDataset(torch.utils.data.Dataset):
         return (
             self.total_blocks - self.start_block
         ) * self.subsequences_per_block
+
+    @staticmethod
+    def _curriculum_group(shard: PackedShard) -> str:
+        value = f"{shard.dataset_name} {shard.config_name or ''}".lower()
+        if "code" in value:
+            return "code"
+        if any(
+            marker in value
+            for marker in ("japanese", ".ja", "_ja", "aozora")
+        ):
+            return "ja"
+        if any(marker in value for marker in ("english", ".en", "_en", "fineweb")):
+            return "en"
+        raise ValueError(f"cannot assign packed shard to curriculum group: {value}")
+
+    def _build_group_weighted_order(self) -> np.ndarray:
+        assert self.group_weights is not None
+        if not self.group_weights or any(
+            weight <= 0.0 for weight in self.group_weights.values()
+        ):
+            raise ValueError("curriculum group weights must all be positive")
+        group_blocks: dict[str, list[int]] = {
+            group: [] for group in self.group_weights
+        }
+        for block_index, shard_index in enumerate(self._block_shard_ids.tolist()):
+            group = self._curriculum_group(self.shards[int(shard_index)])
+            if group not in group_blocks:
+                raise ValueError(
+                    f"curriculum group {group!r} has no configured weight"
+                )
+            group_blocks[group].append(block_index)
+        empty = [group for group, blocks in group_blocks.items() if not blocks]
+        if empty:
+            raise ValueError(f"curriculum groups have no blocks: {empty}")
+
+        rng = np.random.default_rng(self.seed)
+        for blocks in group_blocks.values():
+            rng.shuffle(blocks)
+        cursors = {group: 0 for group in group_blocks}
+        current = {group: 0.0 for group in group_blocks}
+        order: list[int] = []
+        while len(order) < self.total_blocks:
+            available = [
+                group
+                for group, blocks in group_blocks.items()
+                if cursors[group] < len(blocks)
+            ]
+            total_weight = sum(self.group_weights[group] for group in available)
+            for group in available:
+                current[group] += self.group_weights[group]
+            selected = max(available, key=lambda group: (current[group], group))
+            current[selected] -= total_weight
+            order.append(group_blocks[selected][cursors[selected]])
+            cursors[selected] += 1
+        return np.asarray(order, dtype=np.int64)
 
     def order_audit(self, sample_limit: int = 32) -> dict[str, object]:
         canonical = np.asarray(self._block_order, dtype="<i8")
@@ -463,6 +531,7 @@ class PackedCurriculumByteDataset(torch.utils.data.Dataset):
             "seq_len": self.seq_len,
             "base_seq_len": self.base_seq_len,
             "subsequences_per_block": self.subsequences_per_block,
+            "group_weights": self.group_weights,
             "start_block": self.start_block,
             "total_blocks": self.total_blocks,
             "block_order_sha256": digest,

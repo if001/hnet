@@ -23,6 +23,7 @@ class TrainingConfig:
     packed_data_dir: str | None = None
     packed_validation_data_dir: str | None = None
     packed_curriculum_base_seq_len: int | None = None
+    packed_curriculum_group_weights: dict[str, float] | None = None
     validation_datasets: list[DatasetSource] | None = None
     chunk_prompts: list[str] = field(default_factory=list)
     seq_len: int = 512

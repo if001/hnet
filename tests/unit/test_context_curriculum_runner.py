@@ -55,6 +55,16 @@ def test_l1_b_command_uses_global_byte_schedule_and_transition_evaluations() -> 
     assert option_value(command, "--max-train-bytes") == str(TOTAL_TRAIN_BYTES)
     assert option_value(command, "--lr-schedule-steps") == "600"
     assert option_value(command, "--packed-curriculum-base-seq-len") == "32768"
+    group_indices = [
+        index
+        for index, value in enumerate(command)
+        if value == "--packed-curriculum-group-weight"
+    ]
+    assert [command[index + 1] for index in group_indices] == [
+        "ja=0.8",
+        "en=0.1",
+        "code=0.1",
+    ]
     transition_indices = [
         index
         for index, value in enumerate(command)

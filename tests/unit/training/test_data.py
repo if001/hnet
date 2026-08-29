@@ -203,3 +203,55 @@ def test_packed_curriculum_order_is_context_invariant_and_resumable(tmp_path) ->
     resumed_block = audit8["block_prefix"][0]
     assert resumed_block["block_index"] == expected_block["block_index"]
     assert resumed_block["block_offset"] == expected_block["block_offset"]
+
+
+def test_packed_curriculum_stratifies_canonical_blocks_without_replacement(
+    tmp_path,
+) -> None:
+    datasets = []
+    sources = [
+        ("hotchpotch/fineweb-2-edu-japanese", "small_tokens_cleaned"),
+        ("HuggingFaceFW/fineweb-edu", "sample-10BT"),
+        ("codeparrot/codeparrot-clean", None),
+    ]
+    for index, (name, config_name) in enumerate(sources):
+        source_dir = tmp_path / "datasets" / f"source{index}"
+        source_dir.mkdir(parents=True)
+        np.arange(90, dtype=np.uint8).tofile(source_dir / "data.bin")
+        (source_dir / "manifest.json").write_text(
+            json.dumps(
+                {
+                    "dtype": "uint8",
+                    "shards": [{"bin_file": "data.bin", "token_count": 90}],
+                }
+            ),
+            encoding="utf-8",
+        )
+        datasets.append(
+            {
+                "name": name,
+                "config_name": config_name,
+                "manifest": f"datasets/source{index}/manifest.json",
+            }
+        )
+    (tmp_path / "mix_manifest.json").write_text(
+        json.dumps({"datasets": datasets, "is_byte_level": True}),
+        encoding="utf-8",
+    )
+
+    dataset = PackedCurriculumByteDataset(
+        tmp_path,
+        seq_len=2,
+        base_seq_len=8,
+        shuffle=True,
+        seed=42,
+        group_weights={"ja": 0.8, "en": 0.1, "code": 0.1},
+    )
+    prefix = dataset.order_audit(sample_limit=10)["block_prefix"]
+    shard_counts = {
+        shard_id: sum(item["shard_id"] == shard_id for item in prefix)
+        for shard_id in range(3)
+    }
+
+    assert shard_counts == {0: 8, 1: 1, 2: 1}
+    assert len({item["block_index"] for item in prefix}) == 10

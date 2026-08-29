@@ -53,6 +53,8 @@ context phaseごとに少なくとも200 optimizer updatesを確保し、境界�
   変えない。
 - 600 updateには19,200 canonical block、約629M input bytesが必要である。corpus反復を避けるため、既存8:1:1分布を維持した
   `SOURCES_JA8_EN1_CODE1_CONTEXT_1B`をP6専用にpackし、必要block数を開始前に監査する。
+- sourceごとのrecord長が異なるため、record件数比をそのままbyte比とはみなさない。pack後のcanonical blockを日本語80%、
+  英語10%、code 10%となるようgroup内shuffleと重複なしの層化順序で並べ、実際に消費したblock比を監査する。
 - phase Aはblock 0--6,399、phase Bは6,400--12,799、phase Cは12,800--19,199を使う。checkpointには消費済み
   canonical block数を保存し、phase移行と中断再開の双方で同じstream位置から続ける。
 

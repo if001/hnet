@@ -349,6 +349,7 @@ def create_packed_dataloader(
             seed=resolve_training_seeds(training_config).data_order_seed,
             shard_indices=shard_indices,
             start_block=start_micro_batch,
+            group_weights=training_config.packed_curriculum_group_weights,
         )
     dataloader_kwargs: dict[str, object] = {}
     dataloader_kwargs["generator"] = torch.Generator().manual_seed(

@@ -74,6 +74,16 @@ def parse_args() -> TrainingConfig:
         ),
     )
     parser.add_argument(
+        "--packed-curriculum-group-weight",
+        action="append",
+        default=[],
+        metavar="GROUP=WEIGHT",
+        help=(
+            "Optional non-repeating canonical-block mixture weight. "
+            "Repeat for groups such as ja, en, and code."
+        ),
+    )
+    parser.add_argument(
         "--validation-dataset",
         action="append",
         dest="validation_datasets",
@@ -295,6 +305,19 @@ def parse_args() -> TrainingConfig:
     parser.add_argument("--rope-beta-fast", type=float, default=32.0)
     parser.add_argument("--rope-beta-slow", type=float, default=1.0)
     args = parser.parse_args()
+    curriculum_group_weights: dict[str, float] | None = None
+    if args.packed_curriculum_group_weight:
+        curriculum_group_weights = {}
+        for item in args.packed_curriculum_group_weight:
+            group, separator, raw_weight = item.partition("=")
+            if not separator or not group:
+                parser.error(
+                    "--packed-curriculum-group-weight must be GROUP=WEIGHT"
+                )
+            weight = float(raw_weight)
+            if weight <= 0.0:
+                parser.error("curriculum group weights must be positive")
+            curriculum_group_weights[group] = weight
 
     if args.packed_validation_data_dir is not None and args.packed_data_dir is None:
         raise ValueError("--packed-validation-data-dir requires --packed-data-dir")
@@ -360,6 +383,7 @@ def parse_args() -> TrainingConfig:
         packed_data_dir=args.packed_data_dir,
         packed_validation_data_dir=args.packed_validation_data_dir,
         packed_curriculum_base_seq_len=args.packed_curriculum_base_seq_len,
+        packed_curriculum_group_weights=curriculum_group_weights,
         validation_datasets=validation_datasets,
         chunk_prompts=[p for p in (args.chunk_prompts or []) if p.strip()],
         seq_len=args.seq_len,
